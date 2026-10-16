@@ -1,0 +1,78 @@
+---
+title: 参考资料
+description: 本手册引用的原始来源：方法论文章、Claude Code 官方文档、开源项目和平台文档
+evidence: lived
+---
+
+这一页按类别列出手册引用的原始来源，每条一句话说明它在手册里的用处。链接在 2026-10-16 逐一打开核对过；外部内容会更新，引用时以原文为准。方法论怎么被用到手册里，见[背后的理念](/docs/reference/ideas)。
+
+## 方法论与文章
+
+- [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook)：Anthropic，2026-08-21。六个阶段、12 招、每个阶段的产物和人工关卡，[产品篇](/docs/product)的骨架
+- [The AI-native SDLC playbook（Claude Academy 课程版）](https://academy.claude.com/courses/ai-native-sdlc-playbook)：同一内容按课时拆开，每招一课
+- [Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/)：OpenAI，Ryan Lopopolo，2026-02-11。人掌舵、agent 执行；AGENTS.md 当地图，`docs/` 当记录系统
+- [Compound Engineering: How Every Codes With Agents](https://every.to/chain-of-thought/compound-engineering-how-every-codes-with-agents)：Every，Dan Shipper、Kieran Klaassen。Plan → Work → Review → Compound 的复利循环
+- [EveryInc/compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin)：复利工程的开源插件实现
+- [Double Loop Learning in Organizations](https://hbr.org/1977/09/double-loop-learning-in-organizations)：Chris Argyris，Harvard Business Review，1977 年 9 月。双环学习的出处
+- [Teaching Smart People How to Learn](https://hbr.org/1991/05/teaching-smart-people-how-to-learn)：Chris Argyris，Harvard Business Review，1991 年 5 月。温控器比喻、聪明人为什么不擅长学习
+- [Diátaxis](https://diataxis.fr/)：Daniele Procida 的文档框架，教程、操作指南、参考、解释四分类，本站分区的依据
+
+## Claude Code 官方文档
+
+- [Settings](https://code.claude.com/docs/en/settings)：用户级、项目级、local、托管设置的位置和优先级
+- [Settings reference](https://code.claude.com/docs/en/settings-reference)：每个设置项的作用域与取值，如 `skillOverrides`、`autoMemoryDirectory`、`enabledPlugins`、`cleanupPeriodDays`
+- [Permissions](https://code.claude.com/docs/en/permissions)：deny / ask / allow 规则写法，按参数匹配的规则（如 `Agent(model:...)`）
+- [Hooks](https://code.claude.com/docs/en/hooks)：hook 事件、输入输出、决策控制
+- [Skills](https://code.claude.com/docs/en/skills)：skill 如何被触发、`skillOverrides` 的范围（不作用于插件 skill）、`/skill-doctor`
+- [Subagents](https://code.claude.com/docs/en/sub-agents)：子 agent 定义、模型选择顺序、`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`
+- [Memory](https://code.claude.com/docs/en/memory)：CLAUDE.md 与自动记忆、存储位置、`MEMORY.md` 的加载上限
+- [Plugins](https://code.claude.com/docs/en/plugins)：插件的安装、启用与组成
+- [Plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)：自建和分发插件市场
+- [Manage plugins for your organization](https://code.claude.com/docs/en/plugins/org)：在仓库设置里声明市场和插件，团队成员自动获得
+- [Managed settings](https://code.claude.com/docs/en/managed-settings)：托管设置的文件路径、下发方式和优先级
+- [Worktrees](https://code.claude.com/docs/en/worktrees)：`claude --worktree` 并行开发，worktree 建在 `.claude/worktrees/` 下
+- [MCP](https://code.claude.com/docs/en/mcp)：添加和授权 MCP 服务器
+- [GitHub Actions](https://code.claude.com/docs/en/github-actions)：在 PR 和 Issue 里使用 Claude
+- [Commands](https://code.claude.com/docs/en/commands)：内置命令清单，如 `/context`、`/skills`、`/tasks`、`/status`
+- [Changelog](https://code.claude.com/docs/en/changelog)：版本变更记录，核对“某功能从哪个版本开始”
+
+## 流程引擎与插件
+
+- [mattpocock/skills](https://github.com/mattpocock/skills)：Matt Pocock 的 skill 集合，当前的主流程引擎（试用中）
+- [obra/superpowers](https://github.com/obra/superpowers)：用 SessionStart hook 自动注入、强制完整开发流程的上一代主引擎
+- [garrytan/gstack](https://github.com/garrytan/gstack)：按角色和流水线组织的 slash 命令，负责二审、安全审计、真实浏览器、发版
+- [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official)：Claude Code 官方插件市场，hookify、session-report、security-guidance、claude-code-setup 都在这里
+- [anthropics/claude-code-action](https://github.com/anthropics/claude-code-action)：Claude 的 GitHub Action，每个 PR 自动审查
+- [yannikzz/ui-contract](https://github.com/yannikzz/ui-contract)：管“新功能放页面哪个区域”的结构约定
+- [upstash/context7](https://github.com/upstash/context7)：查询最新库文档的 MCP
+
+## 其他工具
+
+- [openai/codex](https://github.com/openai/codex)：OpenAI 的命令行 agent，用来做异构模型二审
+- [cloudflare/mcp](https://github.com/cloudflare/mcp)：Cloudflare 官方 API MCP 服务器，`search` 和 `execute` 两个工具覆盖整个 Cloudflare API
+- [Cloudflare's own MCP servers](https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/)：Cloudflare 官方 MCP 服务器列表与接入说明
+- [farion1231/cc-switch](https://github.com/farion1231/cc-switch)：模型供应商切换工具，见[切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+- [lycheeverse/lychee](https://github.com/lycheeverse/lychee) 和 [lychee-action](https://github.com/lycheeverse/lychee-action)：链接检查工具及其 GitHub Action
+- [Fumadocs](https://fumadocs.dev/)：本站使用的文档框架
+- [OpenNext for Cloudflare](https://opennext.js.org/cloudflare)：把 Next.js 应用部署到 Cloudflare 的适配层
+
+## 平台与网络
+
+- [vercel domains](https://vercel.com/docs/cli/domains) 和 [vercel alias](https://vercel.com/docs/cli/alias)：Vercel CLI 的域名与别名命令
+- [Removing a domain](https://vercel.com/docs/domains/working-with-domains/remove-a-domain)：从项目移除和从账号移除域名的区别
+- [List DNS Records](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/)：Cloudflare API 列出一个 zone 下的全部 DNS 记录
+- [Google Public DNS JSON API](https://developers.google.com/speed/public-dns/docs/doh/json)：用 HTTPS 查询 DNS 的 JSON 接口，验证 DNS 时绕开本机代理
+- [RFC 6890](https://www.rfc-editor.org/rfc/rfc6890.html) 和 [RFC 2544](https://www.rfc-editor.org/rfc/rfc2544.html)：198.18 开头的地址段为网络基准测试保留
+
+## 对比与盘点（第三方）
+
+- [Superpowers vs Matt Pocock's skills: two opposite bets on who runs your agent](https://www.nocoders.com/blog/superpowers-vs-pocock-agent-skills/)：nocoders，2026-06-26。自动注入与手动调用两种思路的对比
+- [superpowersとmattpocock/skills 両方使って分かった哲学の違いと選び方](https://zenn.dev/kanagen/articles/claude-code-skills-superpowers-vs-mattpocock)：Zenn（日文），2026-06-09。两者都用过之后的选择建议
+- [superpowers vs gstack](https://www.agentiquette.com/compare/superpowers-vs-gstack)：Agentiquette，2026-07-07 评分。流程纪律与流水线覆盖面的分项对比
+- [The Best Claude Code Skills in 2026](https://www.buildthisnow.com/blog/guide/mechanics/best-claude-code-skills-2026)：BuildThisNow，2026-09-24。按 token 成本挑 skill，gstack 建议只装用得到的几个
+
+## 相关
+
+- [背后的理念](/docs/reference/ideas)
+- [工具分工总表](/docs/reference/toolchain)
+- [命令速查](/docs/reference/commands)

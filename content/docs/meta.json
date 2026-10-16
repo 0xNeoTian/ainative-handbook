@@ -1,0 +1,22 @@
+{
+  "title": "AI Native 手册",
+  "pages": [
+    "---入门---",
+    "index",
+    "quickstart",
+    "why",
+    "tiers",
+    "launcher",
+    "---三档路径---",
+    "tool",
+    "product",
+    "org",
+    "---专题---",
+    "workflow",
+    "guardrails",
+    "---资料---",
+    "pitfalls",
+    "templates",
+    "reference"
+  ]
+}

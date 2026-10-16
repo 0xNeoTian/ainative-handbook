@@ -1,0 +1,114 @@
+---
+title: 命令速查
+description: 最常用的 Claude Code、插件、审查、部署与排障命令
+evidence: lived
+tier: [tool, product, org]
+updated: 2026-10-16
+---
+
+这一页收最常用的命令，按场景分组；我还在试的标 🧪，还没亲自用过的标 📚。命令和参数截至 2026-10 核对过；工具更新很快，以 `--help` 和官方文档为准。
+
+## Claude Code 内置
+
+| 命令 | 用途 |
+|---|---|
+| `Shift+Tab` | 循环切换权限模式，状态栏出现 plan mode on 即进入 Plan mode（也可以直接用 `/plan`）：只读探索、先出计划，确认后再执行 |
+| `/init` | 生成 CLAUDE.md（生成后手动删到一页） |
+| `/code-review` | 审查当前改动或指定 PR；加 `--comment` 把意见发到 PR |
+| `/security-review` | 安全审查当前分支的改动 |
+| `/simplify` | 只做简化与复用清理，不找 bug |
+| `/goal` | 给一个目标，让 Claude 持续推进到完成（📚） |
+| `/schedule` | 创建定时运行的云端 agent（🧪） |
+| `/fewer-permission-prompts` | 扫描历史，生成常用只读命令的放行列表 |
+| `/install-github-app` | 安装 Claude GitHub App，PR 和 Issue 里可以 @claude（📚） |
+| `/plugin`、`/mcp`、`/hooks`、`/memory` | 管理插件、MCP、hook、记忆 |
+| `claude -w <名字>` | 新建一个 git worktree 并在里面开会话，适合并行任务 |
+| `claude --add-dir <目录>` | 本次会话额外允许访问一个目录（例如 ops 仓） |
+| `claude -c` | 继续最近一次会话 |
+
+## 插件管理
+
+```bash
+claude plugin install <name>@<marketplace>          # 安装
+claude plugin enable <name>@<marketplace>           # 启用
+claude plugin disable <name>@<marketplace>          # 停用（不卸载，可随时开回来）
+claude plugin uninstall <name>@<marketplace>        # 卸载
+claude plugin details <name>@<marketplace>          # 组件清单与常驻 token 成本
+claude plugin marketplace add <URL|路径|owner/repo>  # 添加插件市场
+claude plugin marketplace update [name]             # 更新插件市场
+claude plugin marketplace list                      # 列出插件市场
+```
+
+## 流程引擎（Matt Pocock skills，🧪 试用中）
+
+| 命令 | 用途 |
+|---|---|
+| `/mattpocock-skills:grill-me` | 一轮轮拷问需求，每题给推荐答案 |
+| `/mattpocock-skills:grill-with-docs` | 拷问的同时写 ADR 和术语表 |
+| `/mattpocock-skills:to-spec` | 把对话整理成 spec |
+| `/mattpocock-skills:to-tickets` | 拆成带依赖关系的工单 |
+| `/mattpocock-skills:implement` | 按 spec 或工单实现 |
+| `/mattpocock-skills:tdd` | 先写失败的测试，再写实现让它通过；重构放到审查阶段（这是该 skill 自己的设计） |
+| `/mattpocock-skills:diagnosing-bugs` | 难 bug 诊断循环 |
+| `/mattpocock-skills:handoff` | 把会话压缩成交接文档 |
+| `/mattpocock-skills:ask-matt` | 不知道用哪个时问它 |
+
+## 审查与上线（gstack）
+
+| 命令 | 用途 |
+|---|---|
+| `/codex` | 用另一个模型家族做独立审查 |
+| `/cso` | 安全审计 |
+| `/qa` | 真实浏览器里走一遍流程并修复问题 |
+| `/review` | 合并前审查 |
+| `/investigate` | 系统化排查根因 |
+| `/ship` | 合并基线、跑测试、更新版本与 CHANGELOG、开 PR |
+| `/canary` | 上线后监控（📚） |
+
+## 部署
+
+```bash
+# Cloudflare（静态站、Workers）
+wrangler whoami
+wrangler deploy                      # 按 wrangler.jsonc 部署
+wrangler tail                        # 实时日志
+
+# Vercel（Next.js 应用）
+vercel                               # 预览部署
+vercel --prod                        # 生产部署（建议放进 ask 规则，先确认）
+vercel logs --deployment <部署地址>
+```
+
+上线命令放进 ask 规则，每次执行都要你确认；hookify 只能警告或阻止，做不了“确认后放行”。写进项目的 `.claude/settings.json`：
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(vercel --prod *)",
+      "Bash(wrangler deploy *)",
+      "Bash(bunx wrangler deploy *)"
+    ]
+  }
+}
+```
+
+## 排障
+
+```bash
+# 网络操作失败后，先确认远端真实状态，再决定要不要重试
+git ls-remote origin refs/heads/main
+git ls-remote --tags origin
+
+# 本机代理可能劫持 DNS，用 DoH 验证解析结果
+curl -s 'https://dns.google/resolve?name=example.com&type=A'
+
+# "之前是这样的"：先查历史
+git log --oneline -- <文件>
+git show <commit> --stat
+```
+
+## 相关
+
+- [工具分工总表](/docs/reference/toolchain)
+- [启动器](/docs/launcher)

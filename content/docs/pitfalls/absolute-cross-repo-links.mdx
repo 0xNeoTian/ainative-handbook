@@ -1,0 +1,84 @@
+---
+title: 跨仓链接用完整地址
+description: 指向 ops 仓的相对链接，换到 worktree、GitHub 网页或云端 agent 就全断，而且不报错
+type: pitfall
+evidence: lived
+tier: [org]
+stage: maintain
+rule: 跨仓引用一律写完整 URL，并让园丁定期检查失效链接
+tweet: 我在代码仓的 10 个文档里写了二十多处 ../ 开头的相对链接，指向隔壁的 ops 仓。它们只在两个仓并排放的本机上点得开：换到 worktree，路径往上数就落空；GitHub 网页只解析本仓库内的相对路径；云端 agent 压根没有 ops 仓。跨仓引用，就写完整 URL。
+updated: 2026-10-17
+basis: 2026-05 复盘、2026-10 工作记录
+---
+
+## 发生了什么
+
+我的一个组织用独立的 ops 仓放决策、剧本和复盘。代码仓里有 10 个文档、二十多处链接指向 ops 仓，用的都是相对路径，形如 `../<ops 仓>/...` 或 `../../../<ops 仓>/...`，前提是两个仓放在同一个父目录下。
+
+在我自己的电脑上，这些链接一直点得开，因为两个仓刚好并排放着。2026-10 排查时我才意识到，换个地方它们就全断了：`claude --worktree` 开的 worktree 建在代码仓内部的 `.claude/worktrees/<name>/` 下，同样的相对路径从那里往上数，落到一个不存在的目录；GitHub 网页只解析仓库内部的相对路径；云端 agent 只克隆了代码仓。更早还有一次，我把跟代码绑定的设计文档放进了 ops 仓，审 PR 的人根本点不过去。
+
+## 为什么会这样
+
+相对链接偷偷依赖了“我这台电脑的目录布局”：两个仓必须并排、目录名不能变、读的人必须在本机。这三个条件，在 worktree、GitHub 网页、CI 和云端会话里一个都不成立。GitHub 只能解析仓库内部的相对路径，跳出仓库根目录就找不到。
+
+更麻烦的是，这种失效没有任何报错。人点开是 404 还会察觉，agent 读不到链接内容时只是少了一块上下文，然后照样往下做。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**跨仓引用写完整 URL**，指向分支或固定的 commit：
+
+```markdown
+详见 [ADR-007](https://github.com/your-org/ops/blob/main/decisions/ADR-007_auth.md)
+```
+
+</Step>
+<Step>
+
+**让 CI 拦住仓外的相对链接**。CI 里只检出代码仓，`lychee --offline` 只检查本地文件链接，任何跳出仓库的相对链接都会因为目标不存在而报错：
+
+```yaml
+# .github/workflows/links.yml 里的一个 step
+- uses: lycheeverse/lychee-action@v2
+  with:
+    args: --offline --no-progress './**/*.md'
+```
+
+</Step>
+<Step>
+
+**完整 URL 交给园丁定期查**。私有仓的链接匿名访问是 404，用带权限的 `gh api` 逐条确认，累计所有失败，最后统一用退出码报告：
+
+```bash
+#!/usr/bin/env bash
+# 检查文档里所有指向 ops 仓的完整 URL
+fail=0
+while read -r url; do
+  url=${url%%#*}                       # 去掉页内锚点
+  rest=${url#https://github.com/}      # your-org/ops/blob/main/decisions/ADR-007_auth.md
+  repo=${rest%%/blob/*}                # your-org/ops
+  ref=${rest#*/blob/}; path=${ref#*/}; ref=${ref%%/*}
+  gh api "repos/$repo/contents/$path?ref=$ref" --silent \
+    || { echo "失效：$url" >&2; fail=1; }
+done < <(grep -rhoE 'https://github\.com/your-org/ops/blob/[^)[:space:]]+' docs/ | sort -u)
+exit $fail
+```
+
+这一步适合放进每周的园丁任务，和过期 review 日期一起查。我的园丁任务还在搭，这一步还没跑起来。<Evidence kind="trial" />
+
+</Step>
+<Step>
+
+**agent 要读 ops 仓，显式接进来**。代码仓的 CLAUDE.md 只写一句指针（ops 仓的完整地址）；本机会话需要读写 ops 仓时，用 `permissions.additionalDirectories` 把它加进来，而不是靠相对路径碰运气。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [ops 放哪：独立仓还是放进项目](/docs/org/ops-repo)
+- [让 ops 和项目一起进化](/docs/org/evolve)
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)
+- [模板复制后会各自漂移](/docs/pitfalls/template-copy-drift)

@@ -1,0 +1,135 @@
+# 每次 push 和 pull request 都验证：没有敏感信息、页面里的命令和配置是对的、插件脚本行为正确、
+# 站点能构建、外链有效、插件清单合法。本地等价命令见 README 的“质量保证”。
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.4.3
+  NODE_VERSION: '24'
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  LYCHEE_VERSION: v0.24.2
+  CLAUDE_CODE_VERSION: 2.1.301
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码（完整历史，供 gitleaks 扫描）
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 安装 Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 写出私有敏感词表
+        env:
+          SENSITIVE_TERMS: ${{ secrets.SENSITIVE_TERMS }}
+        run: |
+          if [ -n "$SENSITIVE_TERMS" ]; then
+            printf '%s\n' "$SENSITIVE_TERMS" > .sensitive-terms.txt
+            echo "已从 secret 写出 .sensitive-terms.txt"
+          else
+            echo "::notice::没有配置 SENSITIVE_TERMS（或来自 fork 的 PR 读不到 secret），scan 只检查通用模式"
+          fi
+
+      - name: 敏感信息扫描
+        run: bun run scan
+
+      - name: 删除私有敏感词表
+        if: always()
+        run: rm -f .sensitive-terms.txt
+
+      - name: 安装 gitleaks
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo install -m 0755 "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: gitleaks 扫描全部提交历史
+        run: gitleaks git --redact --no-banner --verbose --exit-code 1 .
+
+      - name: 安装 shellcheck
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: 页面代码块检查
+        run: bun run test:docs
+
+      - name: 插件脚本测试
+        run: bun run test:plugin
+
+      - name: 构建（插件包 + 静态站）
+        run: bun run build
+
+      # 只查 content/ 里的外链（代码块里的示例地址不查）。--root-dir 只是让 /docs/... 这类站内链接
+      # 能解析成 file://，再被 --scheme 过滤掉；站内链接不在这一步检查。
+      - name: 外链检查
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          lycheeVersion: ${{ env.LYCHEE_VERSION }}
+          args: >-
+            --no-progress
+            --scheme https --scheme http
+            --exclude-all-private
+            --root-dir ${{ github.workspace }}
+            --max-retries 3 --retry-wait-time 2 --timeout 30
+            --accept '200..=299,429'
+            --exclude '^https?://([^/]*\.)?openai\.com'
+            --exclude '^https?://mcp\.cloudflare\.com'
+            'content/**/*.mdx'
+
+      # lychee 不支持按域名设置可接受的状态码，这两个域名单独各查一遍：
+      # openai.com 对脚本请求返回 403，mcp.cloudflare.com/mcp 未登录返回 401，都说明地址存在。
+      - name: 外链检查（openai.com 接受 403，mcp.cloudflare.com 接受 401）
+        run: |
+          common=(--no-progress --scheme https --scheme http --root-dir "$GITHUB_WORKSPACE"
+                  --max-retries 3 --retry-wait-time 2 --timeout 30)
+          lychee "${common[@]}" --include '^https?://([^/]*\.)?openai\.com' --accept '200..=299,403,429' 'content/**/*.mdx'
+          lychee "${common[@]}" --include '^https?://mcp\.cloudflare\.com' --accept '200..=299,401,429' 'content/**/*.mdx'
+
+      - name: 安装 Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: 插件清单校验
+        env:
+          DISABLE_AUTOUPDATER: '1'
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+        run: |
+          claude --version
+          claude plugin validate --strict plugin
+          claude plugin validate --strict .                         # 仓库根的插件市场（GitHub 安装入口）
+          claude plugin validate --strict public/marketplace.json   # 构建生成的插件市场（网站安装入口）

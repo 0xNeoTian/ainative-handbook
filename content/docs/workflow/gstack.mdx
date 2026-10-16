@@ -1,0 +1,99 @@
+---
+title: gstack：上线流水线怎么用
+description: 只用它最强的那几样：二审、安全审计、真实浏览器、发版
+evidence: lived
+tier: [product]
+stage: ship
+updated: 2026-10-16
+---
+
+[gstack](https://github.com/garrytan/gstack) 是一组按角色和流水线组织的 slash 命令（MIT，截至 2026-10 约 13.7 万星）。我只用它管“上线流水线和质量”，常用的就 7 个：`/codex`、`/cso`、`/browse`、`/review`、`/investigate`、`/ship`、`/qa`。需求、spec、TDD 这些流程交给 Matt，不让 gstack 插手。
+
+## 为什么只用一部分
+
+- **和流程引擎大面积重叠。** gstack 有 50 多个 skill，从 `/office-hours`、`/autoplan` 到 `/canary`、`/retro`，覆盖整个开发周期
+- **默认会主动调用。** `/investigate` 的说明写着“用户报错时直接调用它，不要自己调试”，`/ship` 写着“用户说代码好了就调用它”。它们和 Matt 的 diagnosing-bugs、pr 抢的是同一类请求
+- **常驻成本。** 50 多个 skill 的描述每个会话都要付
+
+## 7 个上线命令：我用过的 3 个，和值得一试的 4 个
+
+`/codex`、`/cso`、`/browse` 是我真实用过的 <Evidence kind="lived" />，其中 `/codex` 用得最多；后面 4 个按 gstack 官方说明推荐，我还没有在记录里用过 <Evidence kind="industry" />。
+
+| 命令 | 做什么 | 适合什么时候用 |
+|---|---|---|
+| `/codex` | 调用 OpenAI 的 Codex CLI 做独立审查。三种模式：review（给出通过或不通过结论的 diff 审查）、challenge（专门想办法弄坏你的代码）、consult（带上下文连续追问） | 重大改动合并前，做异构模型二审 |
+| `/cso` | 安全审计。默认做静态排查；`--diff` 只看本分支的改动；`--comprehensive` 在隔离环境里复现问题并给出修复候选 | 动到鉴权、支付、密钥、依赖的时候 |
+| `/browse` | 驱动真实浏览器：打开页面、点完整个流程、截图、看控制台报错 | 需要亲眼看到页面效果时 |
+| `/review` | 合并前审查 diff，重点查 SQL 安全、LLM 信任边界、带条件的副作用这类结构性问题 | 开 PR 之前 |
+| `/investigate` | 按“调查、分析、假设、修复”四步排查，没找到根因不许修；排查期间把编辑范围锁在相关模块 | 线上问题，“昨天还好好的”这类问题 |
+| `/ship` | 合并基线分支、跑测试、审查 diff、更新版本号和 CHANGELOG、提交、推送、开 PR | 功能做完、准备合并时 |
+| `/qa` | 在真实浏览器里测一遍，找到 bug 就修，每个修复单独提交；也能测 API、CLI、定时任务、webhook。只要报告不要修，用 `/qa-only` | UI 或流程类改动完成后 |
+
+`/codex` 需要先装好 Codex CLI 并登录。不走 gstack 也可以直接跑 `codex review --base main`。我的经验是推理强度用 medium 就够，xhigh 可能卡很久。
+
+## 成本
+
+按 skill 文件的体积粗估（截至 2026-10，gstack v1.91）：
+
+- **常驻**：50 多个 skill 的描述加起来约 1.3k token
+- **单次触发**：这 7 个命令每次约 4.5k–20k token；全套里最大的超过 3 万
+
+<Evidence kind="industry" /> 两个开关能降成本、减少抢触发（来自 gstack 自带的配置说明，我目前都还是默认值）：
+
+```bash
+# 用不到的直接停用：不再注册，描述不再进上下文，Claude Code 里立即生效
+~/.claude/skills/gstack/bin/gstack-config set disabled_skills make-pdf,pair-agent
+
+# 只在你敲命令时运行，不再主动调用
+~/.claude/skills/gstack/bin/gstack-config set proactive false
+```
+
+`gstack-config set disabled_skills ""` 恢复全部。和 Matt 一起用时，关掉 proactive 能让边界最清楚：流程引擎可以自动触发，流水线只在你敲命令时运行。
+
+## 和 Matt、内置功能的分工
+
+| 事情 | 交给谁 | 备注 |
+|---|---|---|
+| 需求、spec、计划、TDD | Matt | gstack 的 `/office-hours`、`/autoplan` 不作为默认流程 |
+| 开发中的 bug | Matt 的 diagnosing-bugs | 模型会自动调用 |
+| 线上问题 | gstack `/investigate` | 结论写成新的 intent，回到规划 |
+| 提交前的正确性审查 | 内置 `/code-review` | 加 `--comment` 可以把意见发到 PR 上 |
+| 对照 spec 审查 | Matt 的 code-review | 规范和 spec 两轴分开报告 |
+| 合并前的结构性审查 | gstack `/review` | |
+| 异构模型二审 | gstack `/codex` | 见[自己审自己等于没审](/docs/pitfalls/cross-model-review) |
+| 安全 | 内置 `/security-review`，高风险再加 `/cso` | |
+| 真实浏览器验证 | gstack `/browse`、`/qa` | 见[亲眼看到才算完成](/docs/pitfalls/see-it-to-ship) |
+| 发版 | gstack `/ship` 开 PR，人批准后合并 | |
+
+注意重名：gstack 的 `/review` 和内置 `/code-review` 的别名 `/review` 撞名，gstack 的 `/retro` 和 Matt 的 retro 撞名。想彻底避免歧义，可以运行 `gstack-config set skill_prefix true`，命令会变成 `/gstack-review`、`/gstack-ship` 这种带前缀的名字。
+
+## 安装与升级
+
+首次安装需要 bun 1.4.2 或更高，先用 `bun --version` 确认：
+
+```bash
+git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup
+```
+
+它装在 `~/.claude/skills/` 下，作为个人 skill 对所有项目生效。之后注意这几点：
+
+- **用 `/gstack-upgrade` 升级。** 这个 skill 不能被停用。默认不会自动升级，有新版本时会提示
+- **bun 版本别掉队。** 1.4.2 是 gstack 测试过的版本。低于 1.3.3 安装脚本会直接拒绝，因为更老的 bun 编译出的工具能读到项目里的 `.env`；介于两者之间会给警告。版本不够就 `bun upgrade`
+- **`/cso` 还需要本机编译工具链。** macOS 上是 Xcode 命令行工具。缺了它 `/cso` 会报 `not assessed`，其他功能照常
+- **留意 CLAUDE.md。** 安装提示会让你在 CLAUDE.md 里加一段 gstack 说明，列出全部命令。只留你真在用的几个，别把[一页 CLAUDE.md](/docs/templates/claude-md) 撑长
+
+## 常见坑
+
+- [自己审自己等于没审](/docs/pitfalls/cross-model-review)
+- [分段审过了，还要整分支终审](/docs/pitfalls/whole-branch-review)
+- [亲眼看到才算完成](/docs/pitfalls/see-it-to-ship)
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)
+
+## 相关
+
+<Cards>
+  <Card title="流程引擎、流水线与专项工具" href="/docs/workflow" description="三类工具各管一摊" />
+  <Card title="发布：AI 审查，人来批准" href="/docs/product/ship" description="审查三角、发版清单" />
+  <Card title="REVIEW.md 模板" href="/docs/templates/review" description="风险分级与谁有权批准" />
+  <Card title="superpowers 与 Matt：完整对比" href="/docs/workflow/superpowers-vs-matt" description="流程引擎怎么选" />
+</Cards>

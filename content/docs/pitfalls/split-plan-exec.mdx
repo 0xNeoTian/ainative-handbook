@@ -1,0 +1,71 @@
+---
+title: 计划和执行分开会话
+description: 大任务在同一个会话里先计划后执行，计划会把上下文烧光。防止执行阶段带着残余上下文越做越差
+type: pattern
+evidence: lived
+tier: [product, org]
+stage: build
+rule: 大任务的计划和执行分开会话：计划落成文件、审完，再开新会话执行
+tweet: 一次 55 个冲突的上游大合并，我在同一个会话里先写计划再执行。计划前后审了 6 轮，光写计划就把上下文烧光了；执行时会话差点跑不完，计划里一个关键决策还是错的。现在规模一大就拆：计划写成文件、审完、合并，关掉会话；再开一个新会话，只读计划去执行。
+updated: 2026-10-17
+basis: 2026-05 复盘
+---
+
+## 发生了什么
+
+一次上游大合并，冲突有 55 个。我在同一个会话里让 agent 先摸清冲突、写合并计划，然后接着执行。
+
+计划前后审了 6 轮。为了写它，会话读了大量 diff 和冲突片段，上下文基本烧光了。进入执行阶段，会话差点跑不完；计划里一个关键决策其实是错的，也是在我追问之后才发现。
+
+## 为什么会这样
+
+上下文窗口是有限的。计划阶段的探索，读 diff、翻历史、试几种思路又放弃，全都留在上下文里。等到执行，剩下的空间已经不多，自动压缩会把前面的细节概括掉，被否掉的思路和最终的决定也可能混在一起。
+
+还有一个问题：计划只活在对话里，就没法审，也没法复用，会话一断就跟着没了。
+
+拆成两个会话，等于逼着计划落成一个文件：它可以被审查、可以合并进仓库，执行会话也能带着完整的上下文空间从头开始。
+
+## 怎么做
+
+先估规模。别在当前工作区里试合并：手上有没提交的改动时，`git merge --abort` 不保证能把它们原样恢复。开一个临时 worktree 去试，数完就删，当前工作区不受影响：
+
+```bash
+git fetch upstream
+git worktree add --detach ../merge-probe HEAD
+git -C ../merge-probe merge --no-commit --no-ff upstream/main
+git -C ../merge-probe diff --name-only --diff-filter=U | wc -l   # 冲突文件数
+git -C ../merge-probe merge --abort
+git worktree remove ../merge-probe
+```
+
+冲突 30 个以上建议拆，50 个以上必须拆。别的大任务同理：估计一个会话装不下，就拆。
+
+<Steps>
+<Step>
+
+**会话一只出计划**。用 Plan mode（`Shift+Tab`）探索，产出 `docs/plans/YYYY-MM-DD_<slug>-plan.md`：按模块分组，每组写清处理原则、顺序和验证命令。
+
+</Step>
+<Step>
+
+**审计划，合并进仓库，关掉会话**。这一步就可以请另一个模型家族审一遍计划。
+
+</Step>
+<Step>
+
+**会话二只读计划执行**。开新会话（或者 `/clear`），第一句话就交代清楚：读计划文件，从第 1 组开始，每组做完跑验证、提交，不要重新规划。
+
+</Step>
+<Step>
+
+**执行中发现计划不对，就停下来回去改计划**，不在执行会话里临场重新规划。组数多就一组一个会话，交接可以用 `/mattpocock-skills:handoff` 压缩成交接文档。<Evidence kind="trial" />
+
+</Step>
+</Steps>
+
+## 相关
+
+- [开发：先出计划，再写代码](/docs/product/build)
+- [plan 模板](/docs/templates/plan)
+- [自己审自己等于没审](/docs/pitfalls/cross-model-review)
+- [分段审过了，还要整分支终审](/docs/pitfalls/whole-branch-review)

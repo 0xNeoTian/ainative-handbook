@@ -1,0 +1,121 @@
+---
+title: 子 agent 提示词模板
+description: 派子 agent 时提示词里必须有的七样东西
+evidence: lived
+tier: [product, org]
+stage: cross
+updated: 2026-10-16
+---
+
+派子 agent 干活时，提示词里必须有七样东西：任务原文、绝对路径的工作目录、CRITICAL 禁止事项、关键约束的原文摘录、回报格式、自查清单、相关记忆的指针。新开上下文的普通子 agent 看不到你和主会话的聊天记录，提示词就是它知道的全部；少一样，它就会自己猜。fork 出来的子 agent 是例外，它会继承完整对话，所以做独立审查时别用 fork，免得带上主会话的判断和偏见。另外两条规矩：子 agent 用最强的模型，纯机械任务除外；实现类子 agent 不并行，审查类可以并行。
+
+## 模板
+
+```markdown
+你是<项目名>的<角色>子 agent，负责<计划里的哪个任务>。
+
+## 1. 任务原文
+（从计划里原样粘贴这个任务的全部内容，不要只给链接）
+
+## 2. 工作目录
+- 仓库：<绝对路径>
+- 分支：<分支名>（已存在，不要新建或切换）
+- 只允许修改：<文件列表>
+
+## 3. CRITICAL：不要做
+- 不要执行 git reset、git rebase、git push --force、git commit --amend
+- 工作区有未提交改动时，不要 git checkout 或 git switch
+- 不要修改上面列表以外的文件；需要改别的文件，停下来回报
+- 不要安装或升级依赖
+- 不要为了让测试通过而删除、跳过或放宽测试
+
+## 4. 关键约束（原文摘录）
+> <从 spec、CLAUDE.md、ADR 里原样摘出的句子>
+
+## 5. 回报格式（不超过 200 字）
+- 改了哪些文件：路径 + 一句话
+- 测试命令和结果：原样粘贴最后 20 行输出
+- 没完成的部分和原因
+- 不确定、需要我决定的地方
+
+## 6. 自查清单（回报前逐项确认）
+- [ ] 只改了允许的文件（贴出 git status）
+- [ ] <测试命令> 全部通过
+- [ ] <类型检查命令> 没有错误
+- [ ] 没有留下 TODO、调试输出、被注释掉的代码
+
+## 7. 相关记忆
+- <踩过的坑：一句话 + 文档路径>
+- <术语：以 GLOSSARY.md 为准>
+```
+
+## 示例
+
+```markdown
+你是"待办应用"的实现子 agent，负责计划里的任务 2：标签输入框。
+
+## 1. 任务原文
+### 任务 2：标签输入框
+- 接口：使用任务 1 产出的 addTag(todoId: string, name: string): Promise<Tag>
+- [ ] 写失败的测试：输入"工作"并回车后，列表里出现"工作"标签
+- [ ] 写失败的测试：已有 10 个标签时，输入框禁用并显示"每条待办最多 10 个标签"
+- [ ] 运行 bun test src/app/todos，确认失败
+- [ ] 实现 TagInput 组件
+- [ ] 运行 bun test src/app/todos，确认通过
+- [ ] 提交
+
+## 2. 工作目录
+- 仓库：/Users/you/code/todo-app
+- 分支：feature/todo-tags（已存在，不要新建或切换）
+- 只允许修改：src/app/todos/[id]/tag-input.tsx、src/app/todos/[id]/tag-input.test.tsx
+
+## 3. CRITICAL：不要做
+（同模板，原样保留）
+
+## 4. 关键约束（原文摘录）
+> spec 第 3 节：如果一条待办已经有 10 个标签，系统应拒绝新增，并提示"每条待办最多 10 个标签"
+> CLAUDE.md：测试先行；UI 改动要真启动、真打开页面看过，才算完成
+
+## 5. 回报格式（不超过 200 字）
+（同模板）
+
+## 6. 自查清单（回报前逐项确认）
+- [ ] 只改了允许的两个文件（贴出 git status）
+- [ ] bun test src/app/todos 全部通过
+- [ ] bunx tsc --noEmit 没有错误
+- [ ] 没有留下 TODO、console.log、被注释掉的代码
+
+## 7. 相关记忆
+- 组件库的默认样式曾经盖掉新加的 class，改完样式要真打开页面看（docs/retros/2026-09-02_fullscreen-button.md）
+- "标签"在代码里叫 Tag，不叫 Label（见 GLOSSARY.md）
+```
+
+## 每一样怎么写
+
+| 项 | 为什么必须有 | 最容易犯的错 |
+|---|---|---|
+| 任务原文 | 普通子 agent 看不到你的对话，原文是它唯一的依据 | 只给计划文件的链接让它自己读，它会读出不同的重点，甚至做了别的任务 |
+| 绝对路径 | 子 agent 可能在别的目录或 worktree 里启动 | 写相对路径，或者不说明分支，结果改错了地方 |
+| CRITICAL 禁止事项 | 子 agent 为了“恢复状态”可能自作主张动 git 历史 | 不写，或者只写“小心操作”。真实发生过：一个子 agent 跑了 git reset，丢了一个提交，后续的 rebase 让 5 个提交的哈希全变了（见[不让 agent 动 git 历史](/docs/pitfalls/git-history-no-surgery)） |
+| 关键约束原文 | 数字、边界条件、措辞一转述就会走样 | 用自己的话概括，比如把“最多 10 个”写成“数量有上限” |
+| 回报格式 | 固定结构、限制字数，主会话的上下文才不会被回报撑爆 | 让它“汇报一下”，收回一大段过程描述，还得自己再提炼一遍 |
+| 自查清单 | 让子 agent 回报之前先自己对一遍 | 把它的回报当成事实。自查之后，主会话仍要自己跑一遍测试 |
+| 记忆指针 | 让它避开已经踩过的坑 | 把整篇复盘塞进去；给一句话加一个路径就够了 |
+
+禁止事项写在提示词里只是提醒，真正兜底的是权限规则：把 `Bash(git reset --hard *)`、`Bash(git push --force *)` 这类命令写进 deny（见[权限规则](/docs/guardrails/permissions)）。
+
+## 模型和并行
+
+- **子 agent 用最强的模型。** 降级到小模型，单次看不出问题，累积下来跨字段的不变量会频繁被破坏，审查也兜不住（见[子 agent 别为省钱降级](/docs/pitfalls/subagent-strongest-model)）。批量重命名、移动文件这类纯机械任务例外
+- **实现类不并行。** 几个子 agent 同时改代码，冲突的概率很高，合并的成本往往比省下的时间还多
+- **审查类可以并行。** 审查只读不写，几个角度同时看反而更快。Matt 的 code-review 就是派两个并行子 agent，分别查规范和 spec
+
+经常用的子 agent 可以定义成 `.claude/agents/<name>.md`（项目级，可以进 git 共享）或 `~/.claude/agents/<name>.md`（用户级），在 frontmatter 的 `model` 字段里指定模型，可选值有 `sonnet`、`opus`、`haiku`、`inherit`（沿用主会话的模型）等，以[官方文档](https://code.claude.com/docs/en/sub-agents)为准。上面的模板是每次派活时的任务说明，和定义文件是两回事：定义文件写它是谁，任务说明写这一次干什么。
+
+## 相关
+
+<Cards>
+  <Card title="开发：先出计划，再写代码" href="/docs/product/build" description="什么时候派子 agent、怎么并行" />
+  <Card title="plan 模板" href="/docs/templates/plan" description="任务原文从计划里来" />
+  <Card title="不让 agent 动 git 历史" href="/docs/pitfalls/git-history-no-surgery" description="CRITICAL 段为什么必须有" />
+</Cards>

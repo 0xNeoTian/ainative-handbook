@@ -1,0 +1,87 @@
+---
+title: 三层护栏
+description: 应用层、权限规则、hook 三层叠加，任何一层失效都还有兜底
+evidence: lived
+tier: [tool, product, org]
+stage: cross
+updated: 2026-10-17
+basis: 2026-05 复盘、2026-10 工作记录
+---
+
+破坏性操作要过三层护栏：**应用层**（脚本和 Makefile 自己先备份）、**权限规则**（`settings.json` 里的 deny 和 ask）、**hook**（PreToolUse 自动兜底）。三层各有盲区，叠在一起才可靠。但三层都会悄悄失效，所以还要第四件事：定期体检。
+
+## 为什么要三层
+
+写在 CLAUDE.md 里的“不要删库”只是建议。官方文档说得很清楚：权限规则由 Claude Code 执行，不由模型执行；提示词和 CLAUDE.md 影响的是 Claude 想做什么，改变不了 Claude Code 允许它做什么（[原文](https://code.claude.com/docs/en/permissions)）。所以能机械判断的规则，要写进系统。
+
+但系统里的每一层也都有盲区：
+
+| 层 | 在哪 | 管什么 | 盲区 |
+|---|---|---|---|
+| 应用层 | 脚本、Makefile、迁移工具 | 不管谁来执行（你、agent、CI），都先备份、先校验 | 只覆盖走这个入口的操作，agent 绕开 Makefile 直接敲 `psql` 就失效；fork 里的改动会被上游合并冲掉 |
+| 权限规则 | `settings.json` 的 deny、ask、allow | Claude Code 里哪些命令绝对不行、哪些必须你确认 | 按命令文本匹配，换个写法就可能漏掉；只管 Claude Code；会被配置工具整份覆盖 |
+| hook | `settings.json` 的 hooks，或插件 | 工具调用之前执行任意脚本：自动备份、按正则拦截 | 只看得到 Claude Code 的工具调用；脚本在磁盘上但没挂载，就等于没有 |
+
+三层的分工：应用层保证“不管谁来做都先有备份，备份失败就不执行”，权限规则负责“卡人”（让你来决定），hook 负责“兜底”：你没注意到的时候尽力多备份一份，但它不拦任何命令，也只覆盖它知道的那个库。真正能拦住破坏的，是前两层。
+
+## 一次三层全部失效
+
+本地数据库被一条破坏性的数据库命令清空过一次：几个演示用的工作区，连同里面的 agent 配置，没有任何备份。那个库里是真实的运营资产，不是测试数据。之后我加了三层防护：reset 脚本先备份，权限规则要求确认，PreToolUse hook 自动备份。
+
+半年后，2026 年 10 月的一次环境排查，发现三层全没了，原因却只有两个：
+
+1. **应用层**：Makefile 里的备份步骤，两个多月前在一次上游大合并中被冲掉
+2. **权限规则**：排查当天切换模型供应商时，被切换工具连同整个 `settings.json` 一起覆盖
+3. **hook**：挂载关系也写在这个 `settings.json` 里，跟着同一次覆盖丢了；脚本文件还在，只是没挂到任何事件上
+
+备份脚本那一层，两个多月里没有任何报警；另外两层要不是“插件全关”这个症状太显眼，同样不会有人发现。恢复手册里甚至写过检查命令，但它只是一段文字，没有任何机制去跑。完整经过见[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)。
+
+教训：**护栏不会报错，只会消失**。每一层都要有[体检](/docs/guardrails/health-check)。
+
+## 按档位配置
+
+| 档位 | 应用层 | 权限规则 | hook | 体检 |
+|---|---|---|---|---|
+| 小工具 | 可选 | 5 条 deny，见[最小护栏](/docs/tool/guardrails) | 可选 | 改过配置后看一眼 |
+| 产品 | 破坏性脚本先备份，失败就退出 | deny，加上部署、删库、合并 PR 的 ask | 数据库兜底备份（尽力而为） | 会话开始自动检查 |
+| 组织 | 同上，共享文件加 CI 断言 | 关键 deny 放托管设置 | 同上，打包进组织插件 | 会话开始检查、CI 断言、定期全面体检 |
+
+应用层最简单：破坏性脚本的第一步就是备份，备份失败就停下。
+
+```bash
+#!/usr/bin/env bash
+# scripts/db-reset.sh：先备份，备份失败就退出，后面的 reset 不会执行
+set -euo pipefail
+: "${DATABASE_URL:?DATABASE_URL 未设置，停止 reset}"
+umask 077
+dir="$HOME/db-backups"
+mkdir -p "$dir" && chmod 700 "$dir"
+tmp="$(mktemp "$dir/.pre-reset.XXXXXX")"
+if ! pg_dump -Fc -d "$DATABASE_URL" -f "$tmp"; then
+  rm -f "$tmp"
+  echo "备份失败，停止 reset" >&2
+  exit 1
+fi
+backup="$dir/pre-reset-$(date +%Y%m%d-%H%M%S)-$$.dump"
+mv "$tmp" "$backup"
+echo "已备份到 $backup"
+# 从这里往下，才是真正的 reset 步骤
+```
+
+再把 Makefile 的 `db-reset` 目标改成调用这个脚本。这样不管是你、agent 还是 CI 执行 reset，都会先留一份备份；备份失败，reset 根本不会执行。文件名带时间戳和进程号，先写临时文件再改名，几次备份不会互相覆盖；目录 700、文件 600，只有你自己能读。这一层是否真的有效，用[体检](/docs/guardrails/health-check)里的行为断言来守。
+
+## 常见坑
+
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+- [不让 agent 动 git 历史](/docs/pitfalls/git-history-no-surgery)
+
+## 相关
+
+<Cards>
+  <Card title="权限规则：deny、ask、allow" href="/docs/guardrails/permissions" description="我用过的规则（2026-10 被覆盖后正在恢复）、放哪个文件，以及 bypass 模式下需要自己验证的一件事。" />
+  <Card title="用 hook 兜底" href="/docs/guardrails/hooks" description="破坏性数据库命令执行前尽力备份一份，只兜底、不卡人。" />
+  <Card title="护栏体检" href="/docs/guardrails/health-check" description="会话开始检查、CI 断言、全面体检，防止护栏静默失效。" />
+  <Card title="密钥与配置" href="/docs/guardrails/secrets" description="密钥放哪，以及配置切换工具和备份文件带来的风险。" />
+</Cards>

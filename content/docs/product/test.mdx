@@ -1,0 +1,123 @@
+---
+title: 测试：让 Claude 能自己验证
+description: 给 agent 一条能自己跑的反馈回路：一条命令验证、先写失败的测试、UI 改动亲眼看到，用证据判断完成
+evidence: lived
+tier: [product]
+stage: test
+updated: 2026-10-16
+---
+
+测试阶段要做到一件事：**Claude 不靠“我觉得没问题”判断完成**。测试、类型检查、lint 都能由它自己一条命令跑完；修 bug 先写一个会失败的测试；UI 改动必须真的打开看到。你在关卡上看的是证据：命令输出、截图、eval 结果。
+
+| 产物 | 人工关卡 | 衡量指标 |
+|---|---|---|
+| 测试输出、截图、eval 结果，贴在 PR 里 | 你审阅证据，而不是听 agent 说“已完成” | agent 改动的 CI 首次通过率；上线后才发现的回归次数 |
+
+## 为什么
+
+Playbook 这一招的标题就是“给 Claude 一个反馈回路”：让它能验证自己的工作，机械的证据摆在那里，审阅的人才能把注意力放在意图和风险上。没有回路，agent 只能猜；它猜错了，你就得亲自当那个回路。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+### 一条命令跑完验证，写进 CLAUDE.md
+
+把验证收拢成几条失败时返回非零的命令，写进 CLAUDE.md 的命令一节，并附上正常输出的样子：
+
+```markdown
+## 命令
+- `bun test`：全部通过时显示 0 fail
+- `bunx tsc --noEmit`：没有输出即通过
+- `bun run lint`：没有报错即通过
+
+报告任何任务完成之前，先跑完这三条，并把输出贴出来。
+```
+
+最后一句来自 Playbook 的示例，作用是把“验证”变成“完成”定义的一部分。
+
+</Step>
+<Step>
+
+### 新行为用 TDD
+
+```text
+/mattpocock-skills:tdd 给账单导出加"按月筛选"
+```
+
+Matt 的 tdd 有三条规矩值得照搬：<Evidence kind="trial" />
+
+- **先约定在哪一层测**（seam）：动手前列出要测的公开接口，你确认之后才写测试
+- **先红后绿**：先写一个会失败的测试，再写刚好让它通过的代码，一次只做一个切片
+- **重构不在这个循环里**：留到审查阶段做
+
+好测试只通过公开接口验证行为。代码怎么重写，只要行为没变，测试就不该失败。
+
+</Step>
+<Step>
+
+### 修 bug：先写失败的测试，再改代码
+
+让 Claude 先写一个复现问题的测试，确认它因为预期的原因失败，提交；然后只改实现，不许改这个测试。Playbook 建议更进一步：修复任务期间用 hook 拦住对测试文件的修改，或者审查时直接拒绝动了测试的 diff。<Evidence kind="industry" />
+
+难查的 bug 用 `/mattpocock-skills:diagnosing-bugs`。它最核心的是第一步：先造出一条又快又稳、能在这个 bug 上变红的命令；造不出来就停下来向你要环境或日志，绝不凭空猜。有了这条回路，再列 3 到 5 个可以证伪的假设逐个验证，调试日志统一打标记，修完一并清掉。gstack 的 `/investigate` 做的是同一件事，两者选一个当默认，别让两个都自动触发。
+
+</Step>
+<Step>
+
+### UI 改动：亲眼看到才算完成
+
+单测通过不代表界面变了。UI 改动必须真的启动、真的打开、亲眼看到结果：
+
+- 用 gstack 的 `/qa` 在真实浏览器里走一遍流程，发现问题直接修；只想要报告用 `/qa-only`
+- 或者手动走一遍主流程并截图，贴进 PR
+- 改了 CSS，额外看一眼样式优先级和暗色模式
+
+</Step>
+<Step>
+
+### AI 功能：先写 eval
+
+产品里有 AI 功能时，普通测试兜不住。Playbook 的做法：从最近的真实任务里挑 20 到 50 个，每个写成“提示词加验收检查”；在 CI 里定时跑，每次改提示词、skill、hook 也要重跑；通过率下降的改动先审再合并；每次线上事故都变成一个新的 eval。<Evidence kind="industry" />
+
+如果你做的是 Claude Code 插件或 skill，`claude plugin eval` 可以跑插件自带的评测用例。
+
+</Step>
+</Steps>
+
+## 补上“完成前验证”
+
+superpowers 有一个 verification-before-completion skill，强制 agent 在宣布完成之前拿出证据。Matt 的 skill 里没有直接对应的，我用三样东西补：<Evidence kind="trial" />
+
+- **CLAUDE.md 里的规则**：上面那句“先跑完这三条，并把输出贴出来”
+- **一个 hook**：会话里没跑过测试就不许结束。hookify 的 README 里有现成的 stop 规则示例 `require-tests-run`（默认不启用），把匹配的命令改成你的 `bun test` 就能用
+- **UI 改动跑 gstack `/qa`**
+
+内置的 `/goal` 也能起类似作用：给一个机器能判断的完成条件，例如 `/goal bun test 全部通过，且 bunx tsc --noEmit 没有报错`，每一轮结束后由另一个模型判断条件是否满足，没满足就继续做。<Evidence kind="industry" />
+
+## 性能修复：先测量，再问六个问题
+
+性能问题的日志往往没用。Matt 的 diagnosing-bugs 对性能回归的要求是先建立基线测量（计时、profiler、查询计划），再二分定位，先测量后修复。
+
+修复上线之前，回答这六个问题，答不出就不上线：
+
+1. 是在修一个 bug，还是砍掉了一个保护？
+2. 有没有引入竞态？
+3. 类似的地方都改全了吗？
+4. 改完之后，能观测到它真的生效了吗？
+5. 边界情况呢：空、超大、unicode、错误输入？
+6. 它会怎么失败？失败了怎么发现？
+
+## 常见坑
+
+- [亲眼看到才算完成](/docs/pitfalls/see-it-to-ship)：一个全屏按钮的单测通过了，真实界面毫无变化
+- [性能修复先问六个问题](/docs/pitfalls/perf-fix-six-questions)
+- [CI 绿了不等于能发版](/docs/pitfalls/ci-green-not-ready)
+
+## 相关
+
+- [用 hook 兜底](/docs/guardrails/hooks)
+- [gstack：上线流水线怎么用](/docs/workflow/gstack)
+- 上一步：[开发：先出计划，再写代码](/docs/product/build)
+- 下一步：[发布：AI 审查，人来批准](/docs/product/ship)

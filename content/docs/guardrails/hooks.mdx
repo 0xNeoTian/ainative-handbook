@@ -1,0 +1,171 @@
+---
+title: 用 hook 兜底
+description: PreToolUse hook 在危险命令执行前尽力备份一份，hookify 用一句话生成规则
+evidence: lived
+tier: [tool, product, org]
+stage: cross
+updated: 2026-10-17
+basis: 2026-05 复盘、2026-10 工作记录
+---
+
+权限规则管“能不能做”，hook 管“做之前先做什么”。我用得最多的一个 hook 是一份**尽力而为的兜底备份**（2026-10 排查时发现，它的挂载被配置切换工具覆盖掉了，脚本还在，正在重新挂上）：Claude 要跑破坏性的数据库命令时，先把 `DATABASE_URL` 指向的库 `pg_dump` 一份。它不拦任何命令，备份不成也照样放行。真正能拦住破坏的是另外两层：应用层（reset 脚本先备份，备份失败就退出）和 ask 规则（执行前由你确认）。
+
+## 为什么用 hook
+
+- **规则写不出来的，hook 能写。** 权限规则按命令文本做前缀匹配；hook 是任意脚本，可以用正则、不区分大小写、读环境变量
+- **它在权限模式之前执行。** 官方文档写明：PreToolUse hook 在所有权限模式下都会先运行，返回 deny 时，即使开着 bypass 也会拦下（[原文](https://code.claude.com/docs/en/hooks-guide#hooks-and-permission-modes)）
+- **它是确定的。** hook 由 Claude Code 在固定时机执行，不依赖模型“记得”去做
+
+Anthropic 的 [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) 把“用 hook 做审批关卡”列为十二招之一。我的分工稍有不同：卡人用 ask 规则，简单、看得见；hook 只兜底，不拦人。原因很实际：兜底的 hook 一旦会拦人，误报一两次你就想把它关掉，关掉之后就什么都没有了。
+
+## 自动备份 hook
+
+先说清楚它管不到什么：它只备份启动 Claude Code 的环境里 `DATABASE_URL` 指向的那个库。命令实际操作的如果是另一个库、另一个连接串，或者一个 Docker 卷，这份备份帮不上忙；没有连接串、`pg_dump` 失败时，它也只提示一句，命令照样执行。所以它是第三道网，替代不了前两道：
+
+- **应用层**：reset 脚本先备份，备份失败就退出，reset 根本不会执行（写法见[三层护栏](/docs/guardrails)）。[本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)里说的“备份失败就不执行”，指的就是这一层
+- **ask 规则**：破坏性命令执行前，由你来确认（见[权限规则](/docs/guardrails/permissions)）
+
+需要 `jq` 和 `pg_dump`。本地库没有密码的话，也可以直接把连接串写进脚本。
+
+<Steps>
+<Step>
+保存为 `~/.claude/hooks/db-backup.sh`：
+
+```bash
+#!/usr/bin/env bash
+# PreToolUse hook：尽力而为的兜底备份，不拦任何命令。
+# Claude 要跑破坏性数据库命令时，先把 DATABASE_URL 指向的库 pg_dump 到 ~/db-backups/。
+# 没有连接串、备份失败，都只提示、照样 exit 0；真正拦住破坏的是应用层和 ask 规则。
+set -uo pipefail
+
+input="$(cat)"
+cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)"
+[ -z "$cmd" ] && exit 0
+
+# 不区分大小写：DROP / TRUNCATE、dropdb、各种 db reset、删卷、带 -v 的 compose down
+pattern='drop[[:space:]]+(table|database|schema)|dropdb[[:space:]]|truncate[[:space:]]|db[-:_ ]reset|migrate[[:space:]]+reset|volume[[:space:]]+rm|compose[[:space:]]+down.*[[:space:]](-v|--volumes)'
+printf '%s' "$cmd" | grep -Eiq "$pattern" || exit 0
+
+say() { jq -nc --arg m "db-backup hook：$1" '{systemMessage: $m}'; }
+
+db_url="${DATABASE_URL:-}"
+if [ -z "$db_url" ]; then
+  say "命中破坏性命令，但环境里没有 DATABASE_URL，没有备份"
+  exit 0
+fi
+
+# 文件名 = 项目名 + 时间戳 + 进程号；先写临时文件，成功后再改名。目录 700，文件 600
+umask 077
+dir="$HOME/db-backups"
+mkdir -p "$dir" && chmod 700 "$dir"
+cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
+project="$(basename "${cwd:-unknown}" | tr -cd 'A-Za-z0-9._-')"
+name="${project:-project}-$(date +%Y%m%d-%H%M%S)-$$"
+tmp="$(mktemp "$dir/.$name.XXXXXX")" || { say "建不了临时文件，没有备份"; exit 0; }
+if pg_dump -Fc -d "$db_url" -f "$tmp" 2>/dev/null && mv "$tmp" "$dir/$name.dump"; then
+  say "已把 DATABASE_URL 指向的库备份到 $dir/$name.dump"
+else
+  rm -f "$tmp"
+  say "pg_dump 失败，没有备份成功"
+fi
+exit 0
+```
+</Step>
+<Step>
+加上执行权限，喂一条假的输入测一下：
+
+```bash
+chmod +x ~/.claude/hooks/db-backup.sh
+echo '{"tool_input":{"command":"psql -c \"drop table users\""}}' | ~/.claude/hooks/db-backup.sh; echo "exit=$?"
+```
+
+应该看到一行带 `systemMessage` 的 JSON，退出码是 0。
+</Step>
+<Step>
+在 `~/.claude/settings.json` 里挂到 PreToolUse 上：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/db-backup.sh",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+然后在 Claude Code 里运行 `/hooks`，确认它出现在 PreToolUse 下面。**脚本在磁盘上不等于生效，挂上了才算。** 我就栽在过这一步。
+</Step>
+</Steps>
+
+几个设计上的选择：
+
+- **永远 exit 0。** 备份失败、没装 `pg_dump`、没有连接串，都只提示、不拦截。要拦的事，交给应用层和 ask 规则
+- **用 `systemMessage` 提示。** PreToolUse 的 hook 正常退出时，它的 stderr 你和 Claude 都看不到；输出一个带 `systemMessage` 字段的 JSON，提示才会显示给你
+- **备份之间不会互相覆盖。** 文件名由项目名、时间戳和进程号组成，几个会话同时触发也不会撞名；先写临时文件，`pg_dump` 成功后再改名，失败时只删自己的临时文件
+- **备份就是你的数据。** 目录权限 700、文件 600，只有你自己能读。`-Fc` 是压缩的自定义格式，`pg_restore --list <备份文件>` 能快速看一眼里面有什么；但真正证明能恢复的，是定期把它恢复到一个临时库里抽查数据（做法见[本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)）
+- **宁可多备份。** `grep -rn "drop table" src/` 这样的命令也会触发一次备份。误报的代价是一个多余的文件，漏报的代价是数据。`~/db-backups/` 记得定期清理
+- **挂在用户级。** 这样对所有项目生效。但用户级文件也最容易被工具覆盖，所以一定要配合[体检](/docs/guardrails/health-check)；最关键的 hook 也可以放进托管设置
+
+## hookify：一句话生成规则
+
+<Evidence kind="trial" /> 不想自己写脚本时，可以用官方插件 hookify：
+
+```bash
+claude plugin install hookify@claude-plugins-official
+```
+
+然后用 `/hookify`（完整写法是 `/hookify:hookify`）加一句话描述规则：
+
+```text
+/hookify 执行 vercel --prod 之前提醒我先确认
+```
+
+它会在项目的 `.claude/` 目录下生成一个 `hookify.<规则名>.local.md`：YAML 头里写匹配条件（Python 正则），正文是命中时显示的提示。`action: warn` 只提醒，是默认值；`action: block` 直接拦下。改完立即生效，不用重启。
+
+```markdown
+---
+name: block-force-push-main
+enabled: true
+event: bash
+pattern: git\s+push\b.*\s(--force|-f)\b.*\bmain\b
+action: block
+---
+
+不要 force push 到 main。确实需要时，先打 tag 备份，再让我手动执行。
+```
+
+常用命令：`/hookify:list` 列出所有规则，`/hookify:configure` 开关规则；不带参数运行 `/hookify`，它会回看最近的对话，找出你纠正过 Claude 的地方，建议把它们变成规则。
+
+两个要注意的地方：hookify 的 hook 是 Python 脚本，本机要有 Python 3；所有规则都靠 hookify 插件本身的 hook 执行，插件一旦被关掉（比如被切换工具改了 `enabledPlugins`），所有规则会一起失效，而且没有任何提示。体检时要把“hookify 是否启用”也算进去。我还在试它的写法和误报率，结论可能会变。
+
+## hook 的局限
+
+- **只看得到 Claude Code 的工具调用。** 你自己在终端敲的命令、CI、其他 agent 都不经过它，所以应用层的备份不能省
+- **没挂载就不生效。** 脚本还在、配置没了，hook 就不存在。定期用 `/hooks` 看一眼，或者交给体检脚本
+- **能被整体关掉。** `disableAllHooks` 设置和 `--bare` 启动模式都会跳过 hook
+- **以你的完整用户权限运行。** 只挂你读过的脚本；别人仓库里带的 hook，看过再信任
+- **PostToolUse 撤销不了。** 那时动作已经发生了。要拦，只能用 PreToolUse
+- **匹配的仍然是文本。** 正则比前缀规则灵活，但换一种写法照样能绕过。hook 是网，不是墙
+
+## 常见坑
+
+- [本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+
+## 相关
+
+- [三层护栏](/docs/guardrails)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [第 0 步：起步](/docs/product/day-0)

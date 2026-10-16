@@ -1,0 +1,101 @@
+---
+title: 产品：AI-native 开发六阶段
+description: 规划、设计、开发、测试、发布、运维：每个阶段留下什么产物、谁来把关、看哪个指标
+evidence: lived
+tier: [product]
+stage: cross
+updated: 2026-10-17
+---
+
+有了真实用户，就不能再想到哪改到哪。产品档按六个阶段走：**规划 → 设计 → 开发 → 测试 → 发布 → 运维**，运维发现的问题再回到规划。每个阶段只要求两样东西：**一份提交进仓库的产物，一个由人把守的关卡**。写代码已经不是瓶颈，慢的是需求、验证和审批；这两样东西让这几步既快又不出事。
+
+骨架来自 Anthropic 的 [The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook)（2026-08-21 发布，另有 [Claude Academy 课程版](https://academy.claude.com/courses/ai-native-sdlc-playbook)）。它是写给企业工程团队的，每个阶段都有专门的负责人；我把它改成了一个人加 AI 也能执行的版本。
+
+## 六个阶段一览
+
+| 阶段 | 产物（提交进仓库） | 人工关卡 | 看哪个指标 |
+|---|---|---|---|
+| [第 0 步：起步](/docs/product/day-0) | 仓库、一页 CLAUDE.md、权限规则 | 你确认 CLAUDE.md 不超过一页、没有密钥 | 从建仓库到第一次部署的时间 |
+| [规划](/docs/product/plan) | spec 文件的第一节：intent | 你确认做什么、为什么、不做什么 | 从第一次对话到 intent 写定的时间 |
+| [设计](/docs/product/design) | spec 的其余部分、术语表、ADR | 你以产品负责人的身份签字 | 开工之后 spec 又被改了几次 |
+| [开发](/docs/product/build) | plan 文件、代码 diff、测试 | 你批准计划，Claude 才能改文件 | 首轮实现就能合并的比例 |
+| [测试](/docs/product/test) | 测试输出、截图、eval 结果 | 你看证据，不听“我觉得没问题” | agent 改动的 CI 首次通过率 |
+| [发布](/docs/product/ship) | PR、审查记录、发布记录 | 你批准合并和上线 | 合并前抓到的问题与上线后才发现的问题之比 |
+| [运维](/docs/product/maintain) | 诊断记录、复盘、新的 intent | 你决定马上修、排期还是放弃 | 从发现问题到写出新 intent 的时间 |
+
+指标大多改编自 Playbook 每一招后面的“怎么衡量”，都能从 git 和 PR 历史里直接算出来，不需要额外的系统。
+
+## 三条贯穿始终的原则
+
+**一、每个阶段留一份产物，下一阶段读它。** intent → spec → plan → diff 与测试 → PR 与审查记录 → 诊断与新的 intent。Anthropic 的说法是，这些产物合起来就是审计轨迹。对一个人来说，它的价值更直接：一个月后你还知道当初为什么这么做；换一个会话、换一个 agent，也能从文件接着干，不用去聊天记录里捞。
+
+**二、每个阶段有一个人工关卡。** 企业里，intent 由产品负责人确认，计划由工程师批准，上线由发布负责人授权。一个人做产品时，这些角色都是你，所以关卡要落成明确的动作：读完 spec 再提交，在 Plan mode 里点批准，亲手点合并，上线命令必须弹确认。
+
+**三、写代码的 agent 不能批准自己的代码。** 这是 Playbook 里说得最硬的一条：写代码的 agent 没有办法批准它，从而保住职责分离；agent 可以一路做到生产关卡前，但过不去。落到实践就是[审查三角](/docs/product/ship)：主力模型写完，另一个模型家族独立审，人拍板。
+
+## 一个人怎么执行：我的改动
+
+| Anthropic 的版本 | 我的版本 | 为什么 |
+|---|---|---|
+| 单独的 `intent.md` | intent 写在 spec 文件的第一节 | 一个人既提需求又做设计，两个文件来回切没有收益；“先写 intent、确认后再设计”的顺序不变 |
+| `spec.md`、`plan.md` | `docs/specs/YYYY-MM-DD_<slug>.md`、`docs/plans/YYYY-MM-DD_<slug>-plan.md` | 日期前缀按时间排序，同一个 slug 把 spec、plan 和分支串起来 |
+| 同事做人工审查 | 先由另一个模型家族独立审，再由你拍板 | 一个人没有同事，异构模型替你先筛一遍 |
+| 发布负责人在变更单上授权 | 上线命令放进 ask 规则，每次都要你点头 | 用权限规则和 hook 实现同一个关卡 |
+
+仓库里的文档目录：
+
+```text
+docs/
+├── specs/      # 2026-10-16_monthly-export.md（开头一节是 intent）
+├── plans/      # 2026-10-16_monthly-export-plan.md
+├── adr/        # 不好回头的决定
+├── runbooks/   # 跟代码绑定的操作手册
+└── retros/     # 复盘
+```
+
+## 工具分工
+
+同一件事只交给一个工具负责，否则几套工具会抢着触发，同一个项目里流程前后不一致。
+
+| 角色 | 用什么 | 可信度 |
+|---|---|---|
+| 流程引擎：想清楚、写 spec、拆工单、实现、TDD、审查 | Matt Pocock skills（`/mattpocock-skills:*`） | 🧪 2026-10 起试用 |
+| 上线流水线：异构二审、安全审计、真实浏览器、发版 | gstack（`/codex`、`/cso`、`/qa`、`/ship`） | ✅ 部分命令亲历 |
+| 内置能力：计划、审查、并行、护栏、定时任务 | Plan mode、`/code-review`、`/security-review`、worktree、hook；定时任务 `/schedule` | ✅ 亲历；`/schedule` 🧪 试用中 |
+
+Matt 没有 hook，不会在会话开始时接管流程：16 个编排类 skill 只能手动调用，tdd、diagnosing-bugs 等 11 个纪律类 skill 模型可以自动调用；产物（术语表、ADR、Issue）跨会话保留。我用了大半年（约 7 个月）的上一代主引擎 superpowers 正好相反：会话一开始就自动接管，强制走完整流程。两者的取舍、为什么换、怎么换，见 [superpowers 与 Matt：完整对比](/docs/workflow/superpowers-vs-matt)。不知道某一步该用 Matt 的哪个 skill，直接问 `/mattpocock-skills:ask-matt`。gstack 只用它最强的几样，见 [gstack：上线流水线怎么用](/docs/workflow/gstack)。
+
+## 从一类低风险改动开始
+
+不要第一天就把六个阶段全开、把权限全放。Playbook 建议先从没有前置依赖的几招入手：写 intent、默认用 Plan mode、写 CLAUDE.md、把规范做成 skill、给 Claude 反馈回路、用 hook 做审批关卡。
+
+我的建议是再收窄一步：先挑一类低风险的改动，比如文案、文档、小的界面修复，把从 intent 到上线的整条链跑通一次。看哪一步卡住、哪个关卡形同虚设，修好之后再扩到更大的改动，再按数据逐步放权：首轮合并率稳定了，再考虑让 agent 并行；审查一直抓不到问题，再考虑放宽某一类改动的审查。
+
+这本手册自己就是产品档：需求是先拷问出来的，经过见[规划](/docs/product/plan)。
+
+## 常见坑
+
+每个阶段最容易踩的一个：
+
+- 起步：[插件不是越多越好](/docs/pitfalls/plugin-bloat)
+- 设计：[实质改动先留文档再动手](/docs/pitfalls/process-before-code)
+- 开发：[计划和执行分开会话](/docs/pitfalls/split-plan-exec)
+- 测试：[亲眼看到才算完成](/docs/pitfalls/see-it-to-ship)
+- 发布：[自己审自己等于没审](/docs/pitfalls/cross-model-review)
+- 运维：[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+
+## 相关
+
+<Cards>
+  <Card title="第 0 步：起步" href="/docs/product/day-0" description="建仓库、一页 CLAUDE.md、流程引擎和护栏，第一天配好" />
+  <Card title="规划：先写 intent" href="/docs/product/plan" description="动手之前，用一页纸说清做什么、为什么" />
+  <Card title="设计：从 intent 到 spec" href="/docs/product/design" description="边拷问边沉淀术语表和 ADR，spec 以仓库为准" />
+  <Card title="开发：先出计划，再写代码" href="/docs/product/build" description="Plan mode、拆工单、分会话、并行的边界" />
+  <Card title="测试：让 Claude 能自己验证" href="/docs/product/test" description="一条命令验证，先写失败的测试，UI 亲眼看到" />
+  <Card title="发布：AI 审查，人来批准" href="/docs/product/ship" description="审查三角、整分支终审、发版清单" />
+  <Card title="运维：线上问题变成新的 intent" href="/docs/product/maintain" description="诊断、复盘，把事故变成下一轮的规则" />
+  <Card title="选平台：Vercel 还是 Cloudflare" href="/docs/product/platform" description="Vercel 跑应用，Cloudflare 做底座" />
+</Cards>
+
+- [模板库](/docs/templates)：intent、spec、plan、ADR、复盘、REVIEW.md
+- [选档：小工具、产品还是组织](/docs/tiers)

@@ -1,0 +1,89 @@
+---
+title: 不让 agent 动 git 历史
+description: agent 为了“恢复状态”会自作主张 reset、rebase。用权限规则和提示词把改写历史留给人
+type: pitfall
+evidence: lived
+tier: [product, org]
+stage: build
+rule: 改写 git 历史的操作一律不让 agent 自主执行
+tweet: 一个子 agent 觉得状态“不对”，自作主张跑了 git reset，丢了一个 commit；后面的 rebase 又让 5 个提交的哈希全变了。现在 reset、rebase、force push 一律不让 agent 自己动；真要动，我自己来，先把改动存好，再留一个 rescue 分支。
+updated: 2026-10-16
+basis: 2026-05 复盘
+---
+
+## 发生了什么
+
+我派一个子 agent 去做一项改动。做到一半，它认为工作区“状态不对”，为了恢复，自作主张跑了 `git reset`，丢掉了一个 commit。后面的 rebase 又让 5 个提交的哈希全变了。
+
+出事的不是那项改动本身，而是它自己加上的那一步“恢复”。
+
+## 为什么会这样
+
+agent 的目标是让眼前的状态“看起来对”，`git reset` 是最短的路。它看不到这些提交在别处的分量：有没有推到远端，有没有被 PR、文档、别的会话引用，主会话是不是还指望着它。子 agent 只有自己那一小段上下文，更看不到。
+
+改写历史的代价是延后出现的：本地看一切正常，损失要等别人拉代码、对哈希时才暴露。提示词里一句“不要 reset”只是软约束，agent 一旦认定自己在“修复问题”，就会说服自己破例。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**用权限规则挡住常见写法**。写进 `.claude/settings.json`（项目级，进 git）；想对所有项目生效，就在 `~/.claude/settings.json` 再写一份：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(git reset --hard *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ],
+    "ask": [
+      "Bash(git rebase *)",
+      "Bash(git commit --amend *)"
+    ]
+  }
+}
+```
+
+rebase 和 amend 放 ask 不放 deny，是因为整理还没推送的本地提交是正常需求，只是每次都要你点头。
+
+</Step>
+<Step>
+
+**子 agent 提示词里写 CRITICAL do-not 段**。权限规则匹配的是命令文本，换个写法（比如 `git push origin main --force`）就拦不住，所以提示词这一层不能省：
+
+```text
+CRITICAL — 不要做：
+- 不要运行 git reset、git rebase、git push --force、git commit --amend
+- 工作区有未提交的改动时，不要 checkout 或切换分支
+- 觉得状态不对：停下，贴出 git status 和 git log --oneline -5，等我决定
+```
+
+</Step>
+<Step>
+
+**确需改写历史，人在自己的终端里做，先留两条退路**。只打一个 tag 不够：tag 只保住提交，之后的 `git reset --hard` 照样会冲掉工作区里没提交的改动；固定名字的 tag 第二次创建还会失败。
+
+```bash
+git stash push -u -m "before-rewrite"     # 没提交的改动和未跟踪的文件先存起来
+git stash list                            # 最上面一条应该是 before-rewrite；没有就说明本来没改动
+git branch "rescue/$(date +%Y%m%d-%H%M%S)"  # 当前提交留一个带时间戳的分支
+```
+
+也可以把整个工作目录复制一份。出了问题：rebase 还没做完就 `git rebase --abort`；已经做完了，`git reset --hard rescue/<时间戳>` 回到原来的提交。最后再 `git stash pop` 取回改动，前提是第一步确实存了东西，否则会弹出一条更早的旧 stash。
+
+</Step>
+<Step>
+
+**已经丢了，先查 reflog**：`git reflog` 能看到 reset 之前 HEAD 指向哪里，找到哈希后 `git branch rescue/found <哈希>` 就能捞回来。reflog 只记得提交过的东西；没提交的改动被 `git reset --hard` 覆盖之后，基本就找不回了，这也是上一步要先 stash 的原因。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [子 agent 提示词模板](/docs/templates/subagent-prompt)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [小工具的最小护栏](/docs/tool/guardrails)
+- [网络报错先查远端](/docs/pitfalls/verify-remote-first)

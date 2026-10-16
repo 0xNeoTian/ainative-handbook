@@ -1,0 +1,92 @@
+---
+title: 实质改动先留文档再动手
+description: 结果是对的，但 agent 直接改了代码、没留 spec 和 plan，事后没法审计、没法交接、没法请人 review
+type: principle
+evidence: lived
+tier: [product]
+stage: design
+rule: 实质改动先写 spec 和 plan 再按 TDD 实现，一行级修复也留句记录
+tweet: 好几次 agent 交回来的结果是对的，可它是直接上手改的代码，没留 spec，也没留 plan。当下看不出问题，等到要审计、要交接、要找人 review 时才发现：除了一个 diff，什么都没有。现在的硬规则：实质改动先写 spec 和 plan，再按 TDD 实现。
+updated: 2026-10-17
+basis: 2026-06 工作记录
+---
+
+## 发生了什么
+
+这件事在我这里发生过很多次：agent 交回来的结果是对的，测试也过了，但它是直接上手改的代码，没有 spec，也没有 plan。
+
+当下看不出问题。等到要审计（为什么这样改、考虑过哪些方案）、要把工作交给另一个会话或另一个人、要请别人 review 时，手里只有一个 diff。diff 能说明改了什么，说明不了为什么改、放弃了什么、怎么验证。
+
+用 superpowers 的那大半年，我最看重它的一点就是“强制走流程，不准直接上手改”。换成靠手动调用的流程引擎之后，这条约束得自己补上。
+
+## 为什么会这样
+
+agent 的默认倾向是尽快交付结果：需求一清楚，最短的路径就是直接改代码。写 spec 和 plan 对它来说是额外步骤，没有规则要求，就会被跳过。
+
+这些文档的价值都在事后才体现，当下没人觉得缺。等需要的时候，当时的上下文已经找不回来了。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**在 CLAUDE.md 写成硬规则，附上判定标准**：
+
+```markdown
+## 流程（硬规则）
+- 实质改动（新功能、改行为、跨文件重构）：先写 docs/specs/YYYY-MM-DD_<slug>.md
+  和 docs/plans/YYYY-MM-DD_<slug>-plan.md，我确认后再按 TDD 实现
+- 一行级 trivial 修复（拼写、注释、明显笔误）可以豁免，但在 commit message 里写一句原因
+```
+
+</Step>
+<Step>
+
+**用 Matt Pocock skills 时**，先 `/mattpocock-skills:to-spec` 把对话整理成 spec，写进 `docs/specs/`，Issue 里只贴链接（to-spec 默认发到 Issue，改法见[迁移页](/docs/workflow/migrate)），再 `/mattpocock-skills:tdd` 实现。`to-spec` 只能手动调用，所以更需要上一步的规则提醒你。<Evidence kind="trial" />
+
+</Step>
+<Step>
+
+**在 CI 里卡一道**。PR 模板里预留 `Spec:` 和 `Plan:` 两行，CI 检查它们指向的文件真的在仓库里。CI 检出的是合并后的代码，引用主分支上已有的文档也算数；trivial 修复改写一行 `Trivial: 原因`：
+
+```bash
+#!/usr/bin/env bash
+# scripts/check-spec-plan.sh，PR_BODY 由 CI 从 PR 事件里传入
+check() {  # $1 = Spec 或 Plan，$2 = 应在的目录
+  path=$(printf '%s\n' "$PR_BODY" | tr -d '\r' | sed -n "s/^$1: *//p" | head -n1)
+  case "$path" in
+    "$2"/*.md) [ -f "$path" ] || { echo "$1 指向的文件不存在：$path" >&2; return 1; } ;;
+    *) echo "PR 描述缺少一行 $1: $2/....md" >&2; return 1 ;;
+  esac
+}
+printf '%s\n' "$PR_BODY" | tr -d '\r' | grep -q '^Trivial:' && exit 0
+fail=0
+check Spec docs/specs || fail=1
+check Plan docs/plans || fail=1
+exit $fail
+```
+
+在 GitHub Actions 里这样传入 PR 描述：
+
+```yaml
+- name: spec / plan 检查
+  env:
+    PR_BODY: ${{ github.event.pull_request.body }}
+  run: bash scripts/check-spec-plan.sh
+```
+
+</Step>
+<Step>
+
+**30 天后用数据复查**：多少实质改动留了 spec 和 plan，豁免是不是被滥用了。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [设计：从 intent 到 spec](/docs/product/design)
+- [spec 模板](/docs/templates/spec)
+- [plan 模板](/docs/templates/plan)
+- [从 superpowers 迁到 Matt](/docs/workflow/migrate)
+- [计划和执行分开会话](/docs/pitfalls/split-plan-exec)

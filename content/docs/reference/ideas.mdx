@@ -1,0 +1,89 @@
+---
+title: 背后的理念
+description: 手册借用的五个外部理念：各自的核心主张、用在了哪些页面、原文在哪
+evidence: lived
+updated: 2026-10-17
+---
+
+这本手册的骨架借了五个外部理念：OpenAI 的 Harness Engineering 决定“给 agent 搭什么环境”，Anthropic 的 AI-native SDLC 决定“产品篇每个阶段产出什么、谁来把关”，Every 的 Compound Engineering 和 Argyris 的双环学习决定“每次事故怎么变成下一次的规则”，Diátaxis 决定“内容怎么分页”。每节讲三件事：核心主张（我的转述，不是原文）、手册哪里用到它、原文链接。
+
+| 理念 | 一句话 | 手册里对应 |
+|---|---|---|
+| Harness Engineering | 人掌舵，agent 执行；工程师的活是搭环境 | 一页 CLAUDE.md、护栏、ops 仓指针 |
+| AI-native SDLC | 每个阶段提交一个产物，关卡由人把守 | 产品篇六阶段、模板库 |
+| Compound Engineering | 每做完一件事，下一件应该更容易 | 坑库、复盘模板、进化回路 |
+| 双环学习 | 不只修这次的错，还要改产生错误的规则 | 每张卡的“为什么”和“怎么做” |
+| Diátaxis | 文档分四种，混在一起写哪种都写不好 | 全站的分区方式 |
+
+## Harness Engineering（OpenAI）
+
+**核心主张。** 2026 年 2 月，OpenAI 的 Ryan Lopopolo 发表了一篇实验报告：一个小团队从空仓库起步，五个月做出约 100 万行代码、合并约 1500 个 PR 的内部产品，没有一行代码是人手写的，全部由 Codex 生成。核心是“人掌舵，agent 执行”：工程师的主要工作变成设计环境、明确意图、搭建反馈回路。几个具体做法：
+
+- **给地图，不给说明书**：一个巨大的 AGENTS.md 失败了（挤占上下文、很快过时、没法校验），改成约 100 行的 AGENTS.md 当目录，知识放进结构化的 `docs/`，作为唯一的记录系统
+- **agent 看不到的就不存在**：在线文档、聊天记录、人脑里的知识它都访问不到，要不断把上下文推进仓库
+- **规则机械执行**：架构约束用自定义 linter 和结构测试强制，报错信息里直接写修复指引；一个定期运行的“文档园丁”agent 扫描过期文档并提 PR
+- **定期垃圾回收**：agent 连坏模式也照抄，他们把“黄金原则”写进仓库，让后台任务定期扫描偏差、提重构 PR
+- **卡住时问缺了什么**：缺工具、护栏还是文档，补进仓库，而不是让 agent“再努力一点”
+
+**手册哪里用到。**
+
+- [一页 CLAUDE.md](/docs/templates/claude-md)：只放每次都要遵守的规则和指针，就是“给地图”
+- [ops 放哪](/docs/org/ops-repo) 和 [跨仓链接用完整地址](/docs/pitfalls/absolute-cross-repo-links)：仓库之外 agent 看不见，独立 ops 仓要用指针和 `permissions.additionalDirectories` 显式接进来
+- [权限规则](/docs/guardrails/permissions) 和 [用 hook 兜底](/docs/guardrails/hooks)：能写进系统的规则，就不写进提示词
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)：文档里的检查步骤改成 CI
+- [园丁 agent](/docs/org/evolve)：我还在试 <Evidence kind="trial" />
+
+**原文**：Ryan Lopopolo，[Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/)，OpenAI，2026-02-11。
+
+## AI-native SDLC（Anthropic）
+
+**核心主张。** 代码不再是瓶颈之后，瓶颈移到了构建前后仍按人的速度运转的环节：规划、审查和测试、发布。逐行人工审查、按周开会的审批，跟不上 agent 的产出。这份 playbook 把软件生命周期拆成 Plan、Design、Build、Test、Deploy、Maintain 六个阶段，给出 12 招，把流程从直线改成闭环：
+
+- 每个阶段结束时往版本库提交一个产物：intent.md、spec.md、plan.md、diff 和测试、带审查结论的 PR、事故记录。下一阶段从读它开始，提交链本身就是审计记录
+- 人守在关卡上：产品负责人确认 intent、签字 spec，工程师确认 plan；写代码的 agent 没有办法批准自己的代码，审批经分支保护由人完成
+- 线上指标越出正常范围时，诊断结果写成新的 intent.md，回到规划
+- 先手动推进每一步，最终让每个被接受的产物自动触发下一道关卡；从依赖图里没有前置依赖的那几招开始
+
+**手册哪里用到。** [产品篇](/docs/product) 的六阶段结构直接来自它；[intent](/docs/templates/intent)、[spec](/docs/templates/spec)、[plan](/docs/templates/plan) 模板对应前三个产物；[发布](/docs/product/ship) 和 [运维](/docs/product/maintain) 对应后面的关卡和闭环。我的主要改动是缩尺寸：原文写给大企业，尤其是受监管的行业，而这本手册的读者常常一个人兼任产品负责人、工程师和审批人。所以“人工关卡”变成“你必须在这几个点停下来看”，再用[异构模型二审](/docs/pitfalls/cross-model-review)补上第二双眼睛。
+
+**原文**：Anthropic，[The AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook)（作者 Louis Claxton，2026-08-21）；课程版在 [Claude Academy](https://academy.claude.com/courses/ai-native-sdlc-playbook)。
+
+## Compound Engineering（Every）
+
+**核心主张。** 传统工程里，每加一个功能，下一个更难做；复利工程反过来，要求每个功能让下一个更容易。办法是建立学习回路：每个 bug、每次失败的测试、每个解决问题时的顿悟，都记录下来给以后的 agent 用。循环分四步：Plan（agent 调研并写出详细计划）、Work（agent 按计划写代码和测试）、Review（工程师审查产出，也审查从中得到的教训）、Compound（把结果喂回系统，让下一轮更好）。按他们的估计，大约 80% 的功夫在计划和审查，20% 在执行和沉淀。经验写成提示词，放进代码库或插件，团队每个人都能直接用上。Every 把这套流程做成了开源插件，其中 `/ce-compound` 把经验写进 `docs/solutions/`。
+
+**手册哪里用到。** [坑库](/docs/pitfalls) 本身就是 Compound 这一步的产物：每张卡都标明依据（复盘或工作记录），最后落到可执行的做法。[复盘模板](/docs/templates/retro) 留了一节“Harness 反馈”；[记忆分层](/docs/org/memory) 规定了沉淀路径：反馈记忆 → playbook / runbook → hook；[附带插件](/docs/reference/plugin) 里的 harvest skill 负责从复盘里提炼规则。
+
+坦白说，我的短板正好在 Compound 的后半段：沉淀很勤，半年 70 多篇复盘、200 多条记忆，但回流不够。规则自动生效、定期体检、模板继承还在补，[组织篇](/docs/org/evolve) 里都标了试用中。
+
+**原文**：Dan Shipper、Kieran Klaassen，[Compound Engineering: How Every Codes With Agents](https://every.to/chain-of-thought/compound-engineering-how-every-codes-with-agents)（Every）；插件仓库 [EveryInc/compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin)。
+
+## 双环学习（Argyris 与 Schön）
+
+**核心主张。** 单环学习是发现偏差后修正行动，但不质疑背后的目标和规则；双环学习是回头修改产生偏差的那条规则或假设。Argyris 用温控器打比方：温度低了就开暖气，是单环；会问“为什么设在这个温度，换一个是不是更合适”，才是双环。他在 1991 年的文章里还指出，最聪明、受过最好教育的专业人士，并不像大家以为的那样善于学习。
+
+**手册哪里用到。** 每次事故都问两层：单环问“这次怎么修好”，双环问“是哪条规则（或者缺了哪条规则）让它发生，要改什么才不会再发生”。所以每张卡的“为什么会这样”要写到规则层面，“怎么做”要落到可执行的机制上：权限规则、hook、CI 断言、模板，而不是“下次注意”。例子是[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)：单环是把三层护栏补回来；双环是承认“护栏会失效”本身需要机制，于是有了[护栏体检](/docs/guardrails/health-check)，以及“同一个坑出现两次就起草 hook”的规定。
+
+**原文**：Chris Argyris，[Double Loop Learning in Organizations](https://hbr.org/1977/09/double-loop-learning-in-organizations)（Harvard Business Review，1977 年 9 月）；[Teaching Smart People How to Learn](https://hbr.org/1991/05/teaching-smart-people-how-to-learn)（Harvard Business Review，1991 年 5 月）。系统的理论见 Argyris 与 Donald Schön 1978 年合著的 *Organizational Learning: A Theory of Action Perspective*。
+
+## Diátaxis（Daniele Procida）
+
+**核心主张。** 文档有四种，各自回应读者一种需要：教程带着学习者动手做一遍；操作指南帮已经会的人完成具体目标；参考提供准确完整、供查阅的事实；解释提供背景，回答“为什么”。教程和指南关乎“做”，参考和解释关乎“知道”；教程和解释服务于学习，指南和参考服务于干活。几种需要混在一页里写，哪种都满足不好。
+
+**手册哪里用到。** 全站按这四类分区：
+
+- 教程：[小工具篇](/docs/tool) 的 30 分钟起步、[启动器](/docs/launcher)
+- 操作指南：[产品篇](/docs/product) 各阶段、[迁移指南](/docs/workflow/migrate)、每张坑卡的“怎么做”
+- 参考：[命令速查](/docs/reference/commands)、[工具分工总表](/docs/reference/toolchain)、[模板库](/docs/templates)
+- 解释：[为什么写这本手册](/docs/why)、本页
+
+我自己的延伸：给 agent 看的文档也适用。CLAUDE.md 是参考（一张地图），runbook 是操作指南，ADR 是解释。一份文件只担一种角色，agent 才知道什么时候该读它。
+
+**原文**：[diataxis.fr](https://diataxis.fr/)，站点的 [Colophon](https://diataxis.fr/colophon/) 写明 Diátaxis 是 Daniele Procida 的工作。
+
+## 相关
+
+- [为什么写这本手册](/docs/why)
+- [参考资料](/docs/reference/sources)
+- [产品：AI-native 开发六阶段](/docs/product)
+- [让 ops 和项目一起进化](/docs/org/evolve)

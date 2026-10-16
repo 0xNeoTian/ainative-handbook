@@ -1,0 +1,63 @@
+---
+title: 工具分工总表
+description: 每件事由哪个工具负责，每个工具标了可信度和安装方式
+evidence: lived
+tier: [tool, product, org]
+updated: 2026-10-17
+---
+
+**同一件事只交给一个工具负责。** 工具一多，最常见的问题不是缺功能，而是几个工具抢着做同一件事：一句“帮我 debug”可能被三个框架同时接住，流程前后不一致。下面这张表是我现在的分工，可信度标签说明了哪些是用了很久的，哪些还在试。
+
+## 按阶段分工
+
+| 阶段 | 主力 | 补充 | 人工关卡 |
+|---|---|---|---|
+| 起步 | 内置 `/init`、`/ainative:setup` | hookify 护栏、ui-contract（UI 项目） | 你确认 CLAUDE.md 不超过一页 |
+| 规划 | `/mattpocock-skills:grill-me` | gstack `/office-hours` | 你确认 intent |
+| 设计 | `/mattpocock-skills:grill-with-docs` → `to-spec` | `domain-modeling`、`prototype`、ui-contract | 产品负责人签字 |
+| 开发 | Plan mode → `/mattpocock-skills:implement` | `tdd`、`to-tickets`、`wayfinder`、worktree | 工程师确认计划 |
+| 测试 | `/mattpocock-skills:tdd` + gstack `/qa` | `diagnosing-bugs` | 代码所有者看证据 |
+| 发布 | 内置 `/code-review` + gstack `/codex` 异构二审 | `/security-review`、gstack `/cso`、`/ship` | 人批准，写代码的 agent 不能批自己 |
+| 运维 | gstack `/canary`、`/investigate` | `/ainative:harvest`、`/schedule` 园丁 | 服务负责人决定处置 |
+
+流程引擎这一列以 Matt Pocock skills 为主。我用了大半年的 superpowers 已经停用，两者的取舍见[完整对比](/docs/workflow/superpowers-vs-matt)。
+
+## 插件与工具清单
+
+| 工具 | 负责什么 | 可信度 | 安装 |
+|---|---|---|---|
+| Matt Pocock skills | 流程引擎：拷问、spec、工单、实现、TDD、审查 | 🧪 试用中 | `claude plugin install mattpocock-skills@claude-plugins-official` |
+| superpowers | 上一代流程引擎：自动强制完整流程 | ✅ 亲历（已停用） | `claude plugin install superpowers@claude-plugins-official` |
+| gstack | 上线流水线：二审、安全审计、真实浏览器、发版 | ✅ 亲历（部分命令） | 见 [gstack 页](/docs/workflow/gstack) |
+| hookify | 用一句话生成 hook 护栏 | 🧪 试用中 | `claude plugin install hookify@claude-plugins-official` |
+| context7 | 查最新的库文档 | ✅ 亲历 | `claude plugin install context7@claude-plugins-official` |
+| typescript-lsp / gopls-lsp | 代码智能 | ✅ 亲历 | `claude plugin install typescript-lsp@claude-plugins-official` |
+| session-report | token、缓存、subagent 开销报告 | 🧪 试用中 | `claude plugin install session-report@claude-plugins-official` |
+| ui-contract | UI 结构约定：“新功能放页面哪里” | 🧪 试用中 | 见[设计阶段](/docs/product/design) |
+| Cloudflare 官方 MCP | 全量 Cloudflare API：DNS、Zone 设置、Workers、R2 | ✅ 亲历 | `claude mcp add --transport http --scope user cloudflare-api https://mcp.cloudflare.com/mcp` |
+| Codex CLI | 另一个模型家族的独立二审 | ✅ 亲历 | 见 [Codex CLI 官方仓库](https://github.com/openai/codex) |
+| claude-code-setup | 新仓库只读扫描，推荐 hook / skill / MCP | 📚 业界做法 | `claude plugin install claude-code-setup@claude-plugins-official` |
+| Claude GitHub Action | 每个 PR 自动 AI 审查 | 📚 业界做法 | 在仓库里运行 `/install-github-app` |
+| 本手册插件 ainative | 体检、配置、推荐、新项目、查坑、提炼复盘 | 🧪 试用中 | 见[插件说明](/docs/reference/plugin) |
+
+## 不建议装的
+
+- **和内置功能重复的插件**。Claude Code 已经内置 `/code-review`、`/simplify`、`/security-review`，再装同类插件只会多一份常驻上下文、多一个抢触发的对象。
+- **一次性装一整个合集**。大合集里多数 skill 你一年也用不到一次。我曾经装了 39 个插件、72 个 subagent，按最近 30 天的真实调用统计后精简到 16 个插件、19 个 subagent。见[插件不是越多越好](/docs/pitfalls/plugin-bloat)。
+- **两套同时自动触发的流程框架**。要试新的，就把其中一套设为只能手动调用。见[迁移方法](/docs/workflow/migrate)。
+
+## 怎么检查自己的工具链
+
+```bash
+claude plugin details <插件名>@<marketplace>    # 组件清单与常驻 token 成本
+```
+
+或者装好[本手册插件](/docs/reference/plugin)后运行 `/ainative:doctor`：它会统计最近各个 skill 的调用次数，指出冗余、冲突和缺失的护栏。
+
+## 相关
+
+- [工具与方法雷达](/docs/reference/radar)：评估过但没采用的工具，以及为什么
+
+- [流程引擎、流水线与专项工具](/docs/workflow)
+- [命令速查](/docs/reference/commands)
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)

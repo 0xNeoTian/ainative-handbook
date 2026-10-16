@@ -1,0 +1,101 @@
+---
+title: REVIEW.md 模板
+description: 写给 AI 审查者的规则：风险分级与谁有权批准
+evidence: industry
+tier: [product, org]
+stage: cross
+updated: 2026-10-16
+---
+
+REVIEW.md 是写给 AI 审查者的规则：哪些问题算严重、哪些不用报、每一级风险的改动必须过哪些检查、由谁批准。放在仓库根目录。先弄清谁会读它：Claude 的 Code Review 服务（在 GitHub PR 上自动审查，面向 Team 和 Enterprise 计划）会自动读取；本地的 `/code-review` 命令**不读** REVIEW.md，只读 CLAUDE.md。所以每个审查者都必须遵守的规则写进 CLAUDE.md，只针对 PR 审查的规则写进 REVIEW.md。
+
+## 谁会读它
+
+| 审查者 | 读不读 REVIEW.md | 怎么让规则生效 |
+|---|---|---|
+| Claude Code Review 服务 | 自动读根目录的 REVIEW.md，子目录也可以再放一份补充 | 从 PR 的目标分支或默认分支读取，不读 PR 自己的改动；保护好默认分支，否则“降低严重程度、排除路径、限制 Nit 数量”这几类指令不生效 |
+| 本地 `/code-review` | 不读，只读 CLAUDE.md | 必须遵守的规则写进 CLAUDE.md |
+| Matt 的 code-review | 会搜集仓库里写了编码规范的文件 | 调用时直接点名 REVIEW.md 最稳妥 |
+| 异构模型二审 | 看工具 | 发起审查时把 REVIEW.md 一并交给它 |
+
+细节见官方的 [Code Review 定制说明](https://code.claude.com/docs/en/code-review-customize)。没有 Team 或 Enterprise 计划，也可以用 `/install-github-app` 装上 Claude GitHub App，再用 [anthropics/claude-code-action](https://github.com/anthropics/claude-code-action) 在每个 PR 上跑审查，在它的提示词里要求按 REVIEW.md 审查（我还没在自己的项目里用过）。
+
+## 模板
+
+```markdown title="REVIEW.md"
+# 审查规则
+
+## 风险分级
+| 级别 | 什么样的改动 | 合并前必须的检查 | 谁能批准 |
+|---|---|---|---|
+| L0 | 文档、注释、文案 | CI 通过 | 作者本人 |
+| L1 | 普通功能和修复 | 测试、内置 /code-review | 工程师 |
+| L2 | 鉴权、支付、数据结构、依赖升级、CI 和部署配置 | L1 + 另一个模型家族独立二审 + 安全审查 | 技术负责人 |
+| L3 | 不可逆或影响生产数据：删列、批量回填、权限模型变更 | L2 + 回滚方案 + 备份确认 | 技术负责人 + 一位没参与编写的人（一人团队见例外流程） |
+
+- 拿不准级别时，按高的算
+- 写代码的 agent 不能批准、也不能合并自己的 PR
+- L3 的第二位批准人必须是人，可以是外部审阅者；另一个模型的二审是必须的检查，不算第二个人
+
+## 什么算 Important
+只有会破坏功能、泄露数据或者阻碍回滚的问题才标 Important：逻辑错误、没按用户隔离的数据库查询、日志或报错里带个人信息、不向后兼容的迁移。风格、命名、重构建议最多算 Nit。
+
+## 每次都要检查
+- 新增的 API 路由有集成测试
+- 日志里不出现邮箱、用户 ID、请求体
+- 数据库查询都按当前用户隔离
+- 新的环境变量已登记在 .env.example，代码里没有硬编码密钥
+- 数据量变大时（列表上千条）性能是否还能接受
+- 依赖变化：新增或升级的包来源可信、版本跳动合理，锁文件的变化和 package.json 的改动对得上
+
+## 不要报告
+- CI 已经检查的：lint、格式、类型错误
+- 生成的文件：src/gen/
+- 锁文件里纯格式、纯排序的变化；锁文件里的依赖变化照常审：异常版本、来源、完整性校验值、package.json 没要求的新依赖
+- 测试代码里故意违反生产规则的写法
+
+## Nit 上限
+每次审查最多报 5 条 Nit。
+
+## 证据要求
+关于代码行为的结论，要给出"文件:行号"，不能只凭命名推断。
+```
+
+## 每一节怎么填
+
+| 节 | 怎么填 | 最容易犯的错 |
+|---|---|---|
+| 风险分级 | 按“改坏了的后果”分级，每级写清必须的检查和批准人 | 按改动行数分级。一行权限配置可能比一千行页面代码危险得多 |
+| 什么算 Important | 收窄定义，写清哪几类问题才阻塞合并 | 不写，结果每次审查都是一堆 Important，真正的问题被淹没 |
+| 每次都要检查 | 写你的项目特有、CI 管不到的规则 | 把 CI 已经管的东西再写一遍 |
+| 不要报告 | 列出生成文件、CI 已覆盖的类别；锁文件只排除格式噪音 | 不写，审查意见里一半是噪音；或者把锁文件整个排除，漏掉依赖风险 |
+| Nit 上限 | 给一个数字 | 不设上限，作者开始无视所有意见 |
+| 证据要求 | 要求给出文件和行号 | 不要求证据，审查者凭函数名猜行为，误报要来回好几轮 |
+
+注意两种“等级”不是一回事：官方 Code Review 给每条发现标的严重程度是 🔴 Important、🟡 Nit、🟣 Pre-existing（原本就存在、不是这个 PR 引入的问题）；风险分级 L0 到 L3 管的是这类改动合并前要过哪些关、谁来批准。
+
+## 一个人的团队怎么批准
+
+<Evidence kind="lived" /> 一人公司里，表里的“工程师”“技术负责人”都是你，但分级依然有用：它决定合并前必须跑哪些检查，以及哪些改动不许 agent 自己合并。我的默认做法是审查三角：主力模型写完，另一个模型家族独立审，人最后拍板。主力模型自己审自己，几乎没有价值（见[自己审自己等于没审](/docs/pitfalls/cross-model-review)）。
+
+L3 要求第二个人，一人公司满足不了时有两条路。一是请一位外部审阅者：顾问、信得过的同行，或者付费的代码审查。二是走有条件的单人例外，并在 PR 里写明“走了 L3 例外”：
+
+1. 冷却期：写完至少隔一晚，第二天重新看一遍再批
+2. 另一个模型家族独立审过，所有高危发现都已处理
+3. 回滚方案演练过，备份确认能恢复
+4. 发布后安排一段观察时间，盯住错误率和关键指标，异常就回滚
+
+模型二审在这里是必须的检查项，不能冒充第二个人：它能找出代码里的问题，但替代不了一个会为后果负责、能追问“为什么现在做”的人。
+
+“agent 不能合并自己的 PR”也要落到配置上：把 `Bash(gh pr merge *)` 写进 `.claude/settings.json` 的 `permissions.ask`，每次合并都要你点头（见[权限规则](/docs/guardrails/permissions)）。
+
+Anthropic 的 [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) 里，“AI in the PR review loop”和“Hooks as approval gates”两招讲的就是这件事：AI 负责审，人负责批，关键动作用 hook 卡住等人确认。
+
+## 相关
+
+<Cards>
+  <Card title="发布：AI 审查，人来批准" href="/docs/product/ship" description="审查三角、整分支终审、发版清单" />
+  <Card title="gstack：上线流水线怎么用" href="/docs/workflow/gstack" description="/review、/codex、/cso 怎么分工" />
+  <Card title="一页 CLAUDE.md" href="/docs/templates/claude-md" description="所有审查者都要遵守的规则放这里" />
+  <Card title="分段审过了，还要整分支终审" href="/docs/pitfalls/whole-branch-review" description="合并前最后一道审查" />
+</Cards>

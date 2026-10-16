@@ -1,0 +1,61 @@
+---
+title: 开始
+description: 这本手册写给谁、怎么读、从哪一档开始
+evidence: lived
+updated: 2026-10-17
+---
+
+这是一本用 Claude Code 做产品的实战手册：首选 Claude Code，方法同样适用于 Codex、Cursor、Gemini CLI 等 AI 编程工具。它不罗列工具，而是回答一个更实际的问题：**一个人加上 AI，怎么把想法做成产品，再把产品做成一个能协作的组织**。里面的每条规则都标明了出处：多数背后是一次真实的事故，少数是从经历里提炼的原则。
+
+第一次来？先看[快速开始](/docs/quickstart)，10 分钟走通第一个项目。
+
+## 先选你在哪一档
+
+<Cards>
+  <Card title="小工具" href="/docs/tool" description="一个人、一个仓库、还没有长期用户。30 分钟起步，配好最小护栏就够了。" />
+  <Card title="产品" href="/docs/product" description="有了真实用户、要持续迭代。按六个阶段走：规划、设计、开发、测试、发布、运维。" />
+  <Card title="组织" href="/docs/org" description="多个仓库、多人协作。需要 ops 仓、组织级 agent，以及让规则自动回流的机制。" />
+</Cards>
+
+拿不准就看[选档](/docs/tiers)：三个信号判断你在哪一档，以及什么时候该升档。
+
+## 三种读法
+
+- **起一个新项目**：打开[启动器](/docs/launcher)，选好档位，照着清单一步步勾。每一步都有可复制的命令。
+- **系统地读**：从[为什么写这本手册](/docs/why)开始，按左侧目录往下读。产品篇是主干，组织篇是这本手册最独特的部分。
+- **只看踩坑**：[坑库](/docs/pitfalls)里有 25 张卡片，每张都标明依据（哪个月的复盘或工作记录）：发生了什么、为什么、怎么防。
+
+## 可信度标签
+
+每一页、每一张卡片都标了可信度。没亲自验证过的做法，不会写成“亲历”。
+
+| 标签 | 含义 |
+|---|---|
+| ✅ 亲历 | 我在真实项目里用过、踩过，有复盘或工作记录为证 |
+| 🧪 试用中 | 我正在试用，结论可能会变，变了会更新 |
+| 📚 业界做法 | 来自官方文档或业界实践，我还没有亲自验证 |
+
+一个例子：我用了大半年（约 7 个月）的流程框架 superpowers 标 ✅；2026 年 10 月刚切过去的 Matt Pocock skills 标 🧪。为什么换、怎么换，写在[流程引擎对比](/docs/workflow/superpowers-vs-matt)里。
+
+## 让 Claude 直接用这本手册
+
+这本手册同时是一个 Claude Code 插件。装好以后，可以让 Claude 按手册的方法给你的环境体检、配置工具链、推荐方案、起新项目、查坑、提炼复盘：
+
+```bash
+claude plugin marketplace add https://ainative.jubao.ai/marketplace.json
+claude plugin install ainative@ainative
+```
+
+详见[插件说明](/docs/reference/plugin)。如果你用的是别的 AI 工具，可以直接读 [`/llms.txt`](https://ainative.jubao.ai/llms.txt)（目录）或 [`/llms-full.txt`](https://ainative.jubao.ai/llms-full.txt)（全文）；每一页顶部也有“复制 Markdown”按钮。
+
+## 这本手册不是什么
+
+- **不是工具大全**。只写我真正在用、或者认真评估过的工具，并说明每个工具负责哪一件事。
+- **不是官方文档**。和 Anthropic、OpenAI 等公司没有关系；引用它们的方法论时都附了原文链接。
+- **不是放之四海皆准**。我的技术栈是 Next.js、TypeScript、Tailwind、bun，部署在 Vercel 和 Cloudflare。原则是通用的，命令请按你的技术栈替换。
+
+## 相关
+
+- [选档：小工具、产品还是组织](/docs/tiers)
+- [启动器](/docs/launcher)
+- [工具分工总表](/docs/reference/toolchain)

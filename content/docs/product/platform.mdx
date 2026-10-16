@@ -1,0 +1,96 @@
+---
+title: 选平台：Vercel 还是 Cloudflare
+description: Vercel 跑 Next.js 应用，Cloudflare 做底座：重叠在哪、各自强在哪，一个域名只挂一个平台
+evidence: lived
+tier: [product]
+stage: ship
+updated: 2026-10-17
+---
+
+我的分工：**Vercel 跑 Next.js 应用，Cloudflare 做底座**。所有域名的 DNS、邮件路由、大文件分发、防火墙和人机验证、边缘 API 和定时任务、静态站，都放 Cloudflare；需要服务端渲染、ISR、Server Actions、每个 PR 一个预览环境的 Next.js 应用，放 Vercel。规则只有两条：**一个域名只挂一个平台；DNS 统一在 Cloudflare 管**。
+
+## 两者重叠在哪
+
+截至 2026-10：
+
+| 能力 | Vercel | Cloudflare | 我放哪 |
+|---|---|---|---|
+| Next.js 全功能（SSR、ISR、Server Actions、图片优化） | 原生支持，新特性第一时间可用 | 通过 OpenNext 适配器 `@opennextjs/cloudflare`，部分新特性要等适配；图片优化要另配 Cloudflare Images | Vercel |
+| 每个 PR 的预览环境 | 连上 Git 就默认有 | Workers Builds 开启预览构建后也有（[2026-09 推出 Worker Previews](https://developers.cloudflare.com/changelog/post/2026-09-22-worker-previews/)） | 跟着应用走 |
+| 静态站、报告、落地页 | 可以 | Workers 静态资源，一份配置就能部署 | Cloudflare |
+| 边缘 API、Webhook、定时任务 | Vercel Functions、Cron Jobs | Workers、Cron Triggers | Cloudflare |
+| WebSocket、有状态 agent | [2026-06 起 WebSocket 公测](https://vercel.com/changelog/websocket-support-is-now-in-public-beta)，连接受函数最长运行时间限制，跨实例共享状态要外接存储 | Durable Objects，天然有状态，适合长连接 | Cloudflare |
+| 对象存储、大文件分发 | Vercel Blob | R2，出口流量免费 | Cloudflare |
+| DNS、邮件路由、WAF、人机验证 | 有 DNS 和防火墙 | DNS、Email Routing、WAF、Turnstile 都在一处 | Cloudflare |
+
+## 推荐分工
+
+**Vercel 跑应用**：主站、管理后台、SaaS 这类 Next.js 全功能产品。它对 Next.js 的支持最完整，每个 PR 自动生成预览环境，审查时直接点开看效果。
+
+**Cloudflare 做底座**：
+
+- 全部域名的 DNS，一个地方管所有记录
+- 邮件路由：把域名邮箱转发到你的收件箱
+- R2：安装包、大文件分发，出口流量不收费
+- WAF 和 Turnstile：防刷、人机验证
+- Workers：边缘 API、Webhook、定时任务、WebSocket，以及用 Durable Objects 跑的有状态 agent
+- 静态页面与报告，比如这本手册，部署方法见[小工具上线](/docs/tool/ship)
+- 需要国内访问的项目：以我的经验放 Cloudflare 更合适。不过两边都不保证国内的速度和可用性，真正面向国内用户的业务，备案和国内云是另一个话题
+
+## 替代方案：全放 Cloudflare
+
+适合成本敏感、或者主要用户在国内的项目。代价是 Next.js 要通过 OpenNext 跑在 Workers 上：截至 2026-10，OpenNext 的文档里仍写着 15.2 引入的 Node Middleware 尚未支持，图片优化也要另外接 Cloudflare Images。
+
+我的判断：应用依赖 Next.js 最新特性，就留在 Vercel；静态站或者简单的服务端渲染，全放 Cloudflare 没有问题。
+
+## DNS 在 Cloudflare、应用在 Vercel 时
+
+在 Vercel 项目的 Domains 设置里复制它给出的记录值，到 Cloudflare 添加，**代理状态选 DNS only（灰色云朵）**。这样配置更简单，也能避免 Cloudflare 的代理（橙色云朵）干扰 Vercel 的证书验证和它自己的安全防护；Vercel 官方也不建议在它前面再套一层反向代理。详见 Vercel 的[域名排障文档](https://vercel.com/docs/domains/troubleshooting)。
+
+## 一个域名只挂一个平台
+
+我踩过的坑：一个子域名的 DNS 早已指向新平台，旧托管平台上却还留着一个早期项目的绑定，从没生效过。清理时我准备连主域名一起从旧平台移除，查依赖才发现，同一主域下另一个子域名正由旧平台提供服务，差点误删。最后只删了那个残留项目。
+
+所以：
+
+- 一个域名（包括子域名）只挂在一个平台上，迁移完成就删掉旧平台上的绑定
+- 删除任何绑定之前，把同一主域下的所有 DNS 记录列出来，逐条确认它指向哪个平台、还有没有流量
+- DNS 统一在 Cloudflare 管，“这个域名在哪”永远只需要查一个地方
+
+## 让 Claude 直接改 DNS：Cloudflare 官方 MCP
+
+Cloudflare 官方的 API MCP server 用 `search` 和 `execute` 两个核心工具覆盖了全部 Cloudflare API（另有 `docs` 和 `whoami`）：Claude 先用 search 找到要调用的接口，再用 execute 调用。我实测 DNS 记录的增删和 Zone 设置的写入都可用。
+
+```bash
+claude mcp add --transport http --scope user cloudflare-api https://mcp.cloudflare.com/mcp
+```
+
+然后在会话里运行 `/mcp` 完成 OAuth 授权。授权时可以自己勾选给哪些权限，只给要用的。
+
+改 DNS 会直接影响线上，我建议把 `execute` 放进 ask，在项目或用户的 settings.json 里：
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "mcp__cloudflare-api__execute"
+    ]
+  }
+}
+```
+
+这样 search 和 docs 照常运行，真正调用 API 时（包括只读的查询）每次都要你确认。
+
+改完验证解析时注意：本机代理的 fake-ip 模式会让 `dig` 的结果失真，用 DoH 查：`curl -s 'https://dns.google/resolve?name=example.com&type=A'`。
+
+## 常见坑
+
+- [一个域名只挂一个平台](/docs/pitfalls/one-domain-one-platform)
+- [本机代理会让 DNS 检查失真](/docs/pitfalls/dns-fake-ip)
+
+## 相关
+
+- [小工具上线：静态站部署到 Cloudflare](/docs/tool/ship)
+- [发布：AI 审查，人来批准](/docs/product/ship)
+- [命令速查](/docs/reference/commands)
+- 官方文档：[OpenNext for Cloudflare](https://opennext.js.org/cloudflare)、[Cloudflare MCP server](https://github.com/cloudflare/mcp)

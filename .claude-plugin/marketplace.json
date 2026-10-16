@@ -1,0 +1,16 @@
+{
+  "name": "ainative",
+  "owner": { "name": "Neo", "url": "https://github.com/0xNeoTian" },
+  "metadata": {
+    "description": "AI Native 手册的配套插件（GitHub 安装入口；网站安装入口见 https://ainative.jubao.ai/marketplace.json）"
+  },
+  "plugins": [
+    {
+      "name": "ainative",
+      "source": "./plugin",
+      "description": "按 AI Native 手册的方法：体检、安装配置、推荐、新项目、坑检查、复盘提炼",
+      "homepage": "https://ainative.jubao.ai",
+      "license": "MIT"
+    }
+  ]
+}

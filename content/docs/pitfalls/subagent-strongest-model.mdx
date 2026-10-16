@@ -1,0 +1,76 @@
+---
+title: 子 agent 别为省钱降级
+description: 子 agent 一律用最强模型：项目里跨字段的约束多，降级单次看不出问题，累积起来审查兜不住
+type: principle
+evidence: lived
+tier: [product, org]
+stage: build
+rule: 有工程不变量的任务，子 agent 默认用最强模型；纯机械任务例外
+tweet: 我在 2026 年 5 月定了一条规矩：子 agent 一律用最强模型。项目里跨字段的约束多，子 agent 只拿到一段上下文，没写明的约束要靠它自己从代码里推；降级单次看不出问题，累积起来审查兜不住。子 agent 的成本不是瓶颈，质量才是。纯机械的活儿例外。
+updated: 2026-10-17
+basis: 2026-05 定的规矩
+---
+
+## 发生了什么
+
+这张卡是一条规矩，不对应某一次事故。2026 年 5 月，我定下子 agent 一律用最强模型，不为省 token 牺牲质量；纯机械的活（批量重命名、移动文件）例外。
+
+理由来自项目本身：跨字段的不变量多，比如两个字段必须同时改、某个状态只能在另一个条件成立时出现。降级的代价单次看不出来，累积起来，审查也兜不住：这类问题会分散在不同的 PR 里，每个 diff 单看都合理。我没有做过强模型和小模型的对照实验，这是按返工风险做的判断。
+
+## 为什么会这样
+
+子 agent 只拿到截取的一段上下文，没写明的约束得靠它自己从代码里推断。我的判断是，这正是强模型和小模型拉开差距的地方：眼前的指令谁都能执行对，要从代码里推出来的约束更容易漏。
+
+还有一个容易忽略的机制：在 Claude Code 里，主会话派子 agent 时可以按次传 `model` 参数，它的优先级高于子 agent 定义里的 `model` 字段。就算定义里写了强模型，主会话为了“省成本”也可能临时降级。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**有不变量的子 agent 写死模型**。实现、重构、迁移、审查这类任务，在 `.claude/agents/<name>.md` 里写 `model: inherit`（跟主会话一致）或 `model: opus`：
+
+```markdown
+---
+name: implementer
+description: 按 plan 实现改动，遵守仓库里的不变量
+model: inherit
+---
+```
+
+</Step>
+<Step>
+
+**拦住按次降级**。在权限规则里给小模型加 ask，主会话想降级时你要确认：
+
+```json
+{
+  "permissions": {
+    "ask": ["Agent(model:*haiku*)"]
+  }
+}
+```
+
+想一刀切，可以设环境变量 `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`（v2.1.257 起），除内置的 Explore 外，所有子 agent 都跑主会话的模型。
+
+</Step>
+<Step>
+
+**纯机械任务单独开口子**。批量重命名、移动文件、格式化这类不需要判断的活，单独定义一个 `model: haiku` 的子 agent，提示词里写清楚“只做机械操作，遇到需要判断的就停下来报告”。
+
+注意它和上一步的 FORCE 互斥：开了 FORCE，Claude Code 会忽略子 agent 定义里的 `model` 字段，这个例外不会生效。要么统一强制，要么只在需要强制的会话里用 `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 claude` 启动，机械任务放在没开 FORCE 的会话里跑。
+
+</Step>
+<Step>
+
+**这是保守默认，用评测来调**。这是我在当前工作负载下的选择：跨字段不变量多、返工贵，宁可多花 token。预算有限时，非交互运行可以用 `claude -p --max-budget-usd <金额>` 封顶，子 agent 的花费也计入。哪些子 agent 能降级，拿几个有代表性的历史任务，强模型和小模型各跑一遍，比较一次通过审查的比例和返工次数再定。运行中用 `/tasks` 核对实际模型。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [子 agent 提示词模板](/docs/templates/subagent-prompt)
+- [开发：先出计划，再写代码](/docs/product/build)
+- [自己审自己等于没审](/docs/pitfalls/cross-model-review)
+- [分段审过了，还要整分支终审](/docs/pitfalls/whole-branch-review)

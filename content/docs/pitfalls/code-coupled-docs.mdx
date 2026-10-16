@@ -1,0 +1,74 @@
+---
+title: 跟代码绑定的文档跟代码放一起
+description: 恢复手册在 ops 仓里写着“Makefile 会先备份”，代码早被上游合并改掉，手册毫不知情
+type: pitfall
+evidence: lived
+tier: [org]
+stage: maintain
+rule: 会随代码改的文档放代码仓，文档里的检查步骤改成 CI
+tweet: 我有一份数据库恢复手册放在 ops 仓，白纸黑字写着“reset 前 Makefile 会自动备份”，开头还写了检查命令。结果代码仓那边，两个多月前的一次上游合并早把这段备份逻辑冲掉了。手册不知道，检查命令也没有任何机制去跑。跟代码绑定的文档就该跟代码放一起，检查写进 CI。
+updated: 2026-10-17
+basis: 2026-10 工作记录
+---
+
+## 发生了什么
+
+本地数据库被一条破坏性的数据库命令清空之后，我给 Makefile 的 reset 目标加了“先备份”，又在 ops 仓写了一份恢复手册：Makefile 会先 dump、备份放在哪、怎么恢复，开头还写了三条检查命令。
+
+半年后排查环境才发现，这段备份逻辑早没了。代码仓是一个上游开源项目的 fork，两个多月前的一次上游大合并，把 Makefile 里的改动冲回了上游原样。ops 仓里的手册还一字不差地写着“会先备份”；那三条检查命令只是文字，没有任何机制会去跑。
+
+## 为什么会这样
+
+这份手册描述的是代码的行为，却和代码分处两个仓库。改 Makefile 的 PR 不会提醒任何人去改另一个仓里的文档，审查的人也看不到它；上游合并解决冲突时只看代码，文档根本不在 diff 里。
+
+至于“写了检查命令”：写在文档里的命令只是文字，不会自己执行。而且其中查 hook 的那条只看脚本文件在不在，就算有人跑，也发现不了 hook 已经没挂上。检查要断言真正起作用的东西。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**用一句话判断归属**：这份内容会不会因为改代码而需要跟着改？会，放代码仓的 `docs/runbooks/`；不会（决策、商业背景、跨仓剧本），留在 ops 仓。ops 仓原来的位置只留一行完整 URL 指过去。
+
+</Step>
+<Step>
+
+**文档里的检查步骤搬进 CI**，每个 PR 都跑，而且查行为、不查关键字。只 grep 到 `pg_dump` 不代表备份真的先跑、失败了会停。下面模拟备份失败，断言删库那一步不会执行：
+
+```bash
+#!/usr/bin/env bash
+# scripts/check-db-reset-backup.sh
+# 假的 pg_dump 直接失败，假的 dropdb 只记录自己被调用过
+set -u
+stub=$(mktemp -d)
+printf '#!/bin/sh\nexit 1\n' > "$stub/pg_dump"
+printf '#!/bin/sh\ntouch "%s/dropdb-called"\n' "$stub" > "$stub/dropdb"
+chmod +x "$stub/pg_dump" "$stub/dropdb"
+if PATH="$stub:$PATH" make db-reset >/dev/null 2>&1; then
+  echo "备份失败时 db-reset 不该成功" >&2; exit 1
+fi
+[ ! -e "$stub/dropdb-called" ] || { echo "备份失败后仍执行了删库" >&2; exit 1; }
+```
+
+桩命令按你的 Makefile 实际调用的命令替换。平时想快速看一眼步骤顺序，用 `make -n db-reset`：它只打印要执行的命令、不真跑，前置目标里的命令也会列出来。
+
+</Step>
+<Step>
+
+**fork 的共享文件重点守**。上游也会改的文件（Makefile、部署脚本、配置模板）里的定制改动，每一处都配一条 CI 断言，否则下一次合并照样无声冲掉。
+
+</Step>
+<Step>
+
+**手册里只写“怎么做”，不写“代码会怎样”**。描述代码行为的句子最容易过时；能用脚本断言的，就别用文字承诺。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [ops 放哪：独立仓还是放进项目](/docs/org/ops-repo)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [跨仓链接用完整地址](/docs/pitfalls/absolute-cross-repo-links)

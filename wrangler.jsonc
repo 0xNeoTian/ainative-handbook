@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.151.0/config-schema.json",
+  "name": "ainative-handbook",
+  "compatibility_date": "2026-10-01",
+  // Static export from `next build` (output: 'export'); no Worker script is needed.
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  },
+  "routes": [{ "pattern": "ainative.jubao.ai", "custom_domain": true }],
+  "observability": { "enabled": true }
+}

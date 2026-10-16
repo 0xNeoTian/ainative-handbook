@@ -1,0 +1,141 @@
+---
+title: 发布：AI 审查，人来批准
+description: 审查三角（主力模型 → 异构模型 → 人）、整分支终审、发版清单，上线审批放在远端由人把关
+evidence: lived
+tier: [product]
+stage: ship
+updated: 2026-10-17
+---
+
+发布阶段的核心是**审查三角：主力模型写完，另一个模型家族独立审，人拍板**。分阶段审过了，合并前还要整条分支再审一次；上线前本地跑全量验证，按清单逐项打勾；上线必须由人批准，审批要放在远端，本地规则只是第一道。写代码的 agent 不能批准自己的代码，也不能自己把代码推上生产。
+
+| 产物 | 人工关卡 | 衡量指标 |
+|---|---|---|
+| PR（含审查记录和测试证据）、发布记录 | 你批准合并、批准上线 | 合并前抓到的问题与上线后才发现的问题之比 |
+
+## 为什么：自己审自己等于没审
+
+Playbook 在发布阶段说得很硬：写代码的 agent 没有办法批准它；agent 可以一路做到生产关卡前，但过不去。
+
+主力模型写完再自己审，倾向于认同自己。同一个模型家族共享同样的训练偏好和盲区，换一个会话、换一套审查提示词，只能去掉其中一部分。我的两次亲历：
+
+- 换一个不同家族的模型做终审，9 条发现里有 2 条是主力模型漏掉的高优先级安全问题
+- 一次主力模型自审完说可以合并，我坚持再审一遍，同一个模型的第二遍就在文档里翻出约 85 处改名残留（旧产品名和旧命令），类型检查完全看不到。“再审一遍”有用，但替代不了异构审查
+
+## 审查三角怎么跑
+
+| 角色 | 负责什么 | 用什么 |
+|---|---|---|
+| 主力模型（写代码的那个） | 交出证据：测试、类型、lint 全过；用新的上下文自查一遍 | `/mattpocock-skills:code-review`、内置 `/code-review`、`/security-review` |
+| 异构模型（另一个模型家族） | 独立审查：不共享上下文，不共享模型偏见 | `codex review --base main`，或 gstack 的 `/codex` |
+| 人（你） | 拍板：看两份审查和证据，决定合并与上线 | 远端的合并与上线审批 |
+
+### 第一角：主力模型自查，交出证据
+
+```text
+/mattpocock-skills:code-review main
+```
+
+Matt 的 code-review 用两个子 agent 并行审：Standards 看是否符合仓库成文的规范，Spec 看是否忠实实现了 spec（漏了、多了、错了）。两份报告分开呈现，免得一个维度掩盖另一个。<Evidence kind="trial" />
+
+再加上 Claude Code 内置的两个命令：
+
+- `/code-review`：找正确性 bug，可以指定 PR 号、分支或路径；加 `--comment` 把意见发到 PR，加 `--fix` 直接改。它遵循 CLAUDE.md。
+- `/security-review`：碰到鉴权、支付、密钥的改动必须跑；风险更高的项目再加跑 gstack 的 `/cso`。
+
+这一角是同一模型家族的复查：上下文是新的，能抓到明显的问题，但不能当作二审。
+
+### 第二角：异构模型独立审
+
+```bash
+codex review --base main -c model_reasoning_effort="medium"
+```
+
+我用 OpenAI 的 Codex CLI 做二审，推理强度 medium 就够，xhigh 可能卡很久。也可以在 Claude Code 里用 gstack 的 `/codex`：`/codex review` 给出通过或不通过的结论，`/codex challenge` 专门想办法把代码弄坏。
+
+两条原则：
+
+- **关键是“不同家族、不共享上下文”，不一定是 Codex**，Kimi、Gemini 都行。给它 spec 的路径和 diff，不要给它主力模型的聊天记录，否则就把偏见一起传过去了。
+- **三个时机**：计划阶段审计划（跨字段的不变量这时最便宜，见[开发](/docs/product/build)）；每个阶段完成后审这一阶段的 diff；合并之前审整条分支。
+
+### 第三角：人拍板
+
+你要看的是：
+
+- 两份审查意见都被处理了吗：要么修了，要么写明了为什么不修
+- 证据齐不齐：测试输出、截图、eval 结果
+- 这是单向门还是双向门：回滚得了的风险低，删数据、改公开接口、数据库迁移这类回不了头的要格外小心（`/mattpocock-skills:pr` 写 PR 描述时专门有这一栏）
+
+保证“只有人能批”分两层：本地用 ask 规则拦住 `gh pr merge`、用 deny 规则拦住强推 main；但本地规则管不到其他上线入口，真正的关卡要放在远端，见下文“卡住上线”一节。
+
+## 合并前：整分支终审
+
+一个拆成 8 个任务的功能，每个任务都单独过了异构审查；合并前对整条分支做终审，又抓出 5 个跨文件交互的深层 bug。分段审查只看得到局部，跨文件的影响只有放在一起才看得见。
+
+```bash
+codex review --base main
+```
+
+在功能分支上对整条分支跑一次，再走一遍第一角的自查。
+
+## 上线前：本地验证和发版清单
+
+- **CI 绿了不等于能发版**：我遇到过一个因环境差异一直红着的检查被当成“环境问题”忽略，版本照发，后来出了问题。发版前在本地跑一遍全量测试、类型检查、lint、单测，CI 只是下限。
+- **发版靠清单，不靠感觉**：一次发版漏传了 CDN 主源，用户的自动更新卡在旧版本出不来。发布产物逐项打勾（安装包、CDN、云端部署、公告），清单固化进 skill。
+- **网络报错先查远端**：push、打 tag、合并遇到超时或 503，不核实就重试或继续，可能重复推送，或者把 tag 打在错的提交上。先用 `git ls-remote origin` 或 `gh api` 确认远端真实状态，再决定重试还是放弃。
+
+## gstack 流水线：/ship 和 /land-and-deploy
+
+- `/ship`：检测并合并基线分支、跑测试、审查 diff、更新 VERSION 和 CHANGELOG、提交、推送、开 PR，一条命令走完。
+- `/land-and-deploy`：接手 `/ship` 开的 PR，检查能否合并，经你批准后合并，等 CI 和部署完成，再到线上验证。第一次用之前先跑 `/setup-deploy` 配置部署平台。<Evidence kind="industry" />
+
+两者都是流水线，不替代审查三角。
+
+## 卡住上线：本地规则加远端审批
+
+Playbook 把这一招叫“用 hook 做审批关卡”。本地这一层最简单：上线和合并命令放进 ask，Claude 每次执行都要你点头。
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(vercel --prod *)",
+      "Bash(wrangler deploy *)",
+      "Bash(bunx wrangler deploy *)",
+      "Bash(gh pr merge *)"
+    ]
+  }
+}
+```
+
+规则按命令文本匹配：`bunx wrangler deploy` 不会被 `Bash(wrangler deploy *)` 拦住，两种写法都要列上。要按条件拒绝（比如不在 main 分支、工作区不干净），用 PreToolUse hook，见[用 hook 兜底](/docs/guardrails/hooks)。
+
+**但本地规则只管得住 Claude 在你这台机器上执行的命令。** 上线还有很多别的入口：一次普通的 `git push` 推到生产分支，就可能触发 Vercel 或 Workers Builds 的自动部署；平台的 REST API、MCP 工具、CI 流水线也都能上线。所以真正的审批要放在远端：
+
+- **生产分支**：开分支保护或规则集，要求必须经过 PR、至少一人批准才能合并
+- **部署环境**：在部署平台和 CI 里给生产环境加保护和审批，比如 GitHub Actions 的 environment 可以设置为指定的人批准后才执行部署
+- **凭证**：按最小权限发，本地和 agent 用的令牌不带生产部署权限
+
+这些远端能力是否可用，取决于你的 GitHub 计划、仓库可见性和部署平台。还要事先定清一件事：在你的项目里，**合并到生产分支是否就等于批准上线**。连了 Git 自动部署，答案就是“是”，合并那一下就是上线关卡，要按上线的标准审；如果不是，就要有一个独立的上线动作，这个动作同样要由人确认。
+
+## Claude GitHub Action：每个 PR 自动审
+
+<Evidence kind="industry" /> 在仓库里运行 `/install-github-app`，它会装好 Claude GitHub App、配置密钥、开一个加入工作流的 PR；合并后在 PR 或 Issue 里 @claude 就能让它干活，安装时也可以选上自动审查每个 PR 的工作流。我还没在自己的项目里长期跑过。
+
+用 Team 或 Enterprise 计划的话，托管的 Code Review 服务会读仓库根目录的 REVIEW.md（本地的 `/code-review` 不读），在里面写清什么算严重问题。模板见 [REVIEW.md 模板](/docs/templates/review)。
+
+## 常见坑
+
+- [自己审自己等于没审](/docs/pitfalls/cross-model-review)
+- [分段审过了，还要整分支终审](/docs/pitfalls/whole-branch-review)
+- [CI 绿了不等于能发版](/docs/pitfalls/ci-green-not-ready)
+- [网络报错先查远端](/docs/pitfalls/verify-remote-first)
+- [发版靠清单，不靠感觉](/docs/pitfalls/release-checklist)
+
+## 相关
+
+- [gstack：上线流水线怎么用](/docs/workflow/gstack)
+- [REVIEW.md 模板](/docs/templates/review)
+- [选平台：Vercel 还是 Cloudflare](/docs/product/platform)
+- 上一步：[测试：让 Claude 能自己验证](/docs/product/test)
+- 下一步：[运维：线上问题变成新的 intent](/docs/product/maintain)

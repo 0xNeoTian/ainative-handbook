@@ -1,0 +1,14 @@
+{
+  "title": "产品篇",
+  "pages": [
+    "index",
+    "day-0",
+    "plan",
+    "design",
+    "build",
+    "test",
+    "ship",
+    "maintain",
+    "platform"
+  ]
+}

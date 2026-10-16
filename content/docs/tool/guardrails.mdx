@@ -1,0 +1,112 @@
+---
+title: 小工具的最小护栏
+description: 五条 deny 规则拦住最致命的误操作，再加三个习惯：密钥不进仓库、git 历史只由你动、定期确认规则还在
+evidence: lived
+tier: [tool]
+stage: day0
+updated: 2026-10-17
+---
+
+小工具不需要整套护栏，但有五条规则第一天就该配上：把删根目录、删家目录、强推 main、硬重置 main 这几种最致命的命令写进 deny。再加三个习惯：**密钥不进仓库，git 历史只由你来动，隔一段时间确认规则还在**。完整版见[三层护栏](/docs/guardrails)。
+
+## 五条 deny 规则
+
+写进用户级的 `~/.claude/settings.json`，对你所有的项目都生效：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(sudo rm -rf *)",
+      "Bash(git push --force origin main *)",
+      "Bash(git reset --hard origin/main *)"
+    ]
+  }
+}
+```
+
+这是我自己用过的规则（2026-10 排查时发现，它们被配置切换工具覆盖丢了，正在恢复，见[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)）。几点说明：
+
+- 已经有 `settings.json` 的话，把 `deny` 数组合并进去，不要整份覆盖。
+- 这个文件是严格 JSON：不能写注释，不能有尾随逗号。改完在会话里运行 `/status`，确认文件加载成功。
+- 规则的判定顺序是 deny、ask、allow，先命中的说了算。deny 命中就直接拒绝，哪条 allow 规则都开不了口子。
+- 结尾带空格和 `*` 的规则也匹配不带参数的命令：`Bash(git push --force origin main *)` 拦得住 `git push --force origin main` 本身。
+
+## 它拦得住什么，拦不住什么
+
+规则匹配的是 Claude 写出来的命令文本。Claude Code 会先把 `&&`、`;`、`|` 连起来的复合命令拆开逐个检查，所以 `cd app && git push --force origin main` 也会被拦住。
+
+但换一种写法就拦不住了：`git push -f origin main`、`/bin/rm -rf /`、`bash -c '...'` 都不匹配上面的规则。deny 是兜住“Claude 最常写出来的那种写法”的安全网，不是安全边界。想再严一点，把强推整个禁掉：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ]
+  }
+}
+```
+
+真正不依赖命令写法的隔离要靠沙箱或容器，见[权限规则：deny、ask、allow](/docs/guardrails/permissions)。
+
+## 习惯一：密钥不进仓库
+
+- 密钥只放环境变量或 `.env.local`，`.gitignore` 里忽略 `.env*`，只留 `!.env.example` 当示例
+- 不要把密钥贴进对话、CLAUDE.md 或代码；程序需要时从环境变量读
+- 再加两条 deny，让 Claude 的读文件工具碰不到 `.env`：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  }
+}
+```
+
+这两条拦得住 Claude 自带的读文件工具，以及 `cat`、`head`、`tail` 这类常见命令，拦不住任意子进程。提交前看一眼 `git status`。万一密钥进了提交，第一件事是去服务商那里作废、重新生成，删提交是第二件事：推送出去的东西要当作已经泄露。
+
+## 习惯二：git 历史只由你来动
+
+我遇到过一个子 agent 为了“恢复状态”自作主张跑了 `git reset`，丢掉一个提交；后面的 rebase 又让 5 个提交的哈希全变了。
+
+所以这几类操作一律不让 agent 自主执行：reset、rebase、force push、amend 已经推送的提交、在有未提交改动时切分支。在 CLAUDE.md 的禁区里写明，再配上面的 deny 规则。确实需要时由你来做，动手前先打一个 tag 备份：
+
+```bash
+git tag backup/before-rebase-2026-10-16
+```
+
+小步提交本身也是护栏：每完成一步就提交，出了问题总能回到上一个干净的点。
+
+## 习惯三：隔一段时间确认规则还在
+
+规则会悄无声息地消失。我用过一个模型供应商切换工具，从第三方模型切回官方时，它把 `~/.claude/settings.json` 整份重写：权限规则、hook、插件启用状态全没了，表面症状只是“插件怎么都关了”。
+
+所以每次用过切换工具、手动改过设置之后，检查一遍：
+
+- 在会话里运行 `/permissions`，看 deny 规则还在不在
+- 或者在终端里查（需要 jq）：`jq '.permissions.deny' ~/.claude/settings.json`
+- 装了[本手册插件](/docs/reference/plugin)的话，`/ainative:doctor` 会检查权限规则和 hook 是否还在
+
+## 什么时候需要更多
+
+开始连数据库、出现真实用户、要部署到生产时，只有 deny 规则就不够了：要补上应用层的备份、上线前的确认（ask 规则）和自动备份的 hook，三层叠加，任何一层失效都还有兜底。见[三层护栏](/docs/guardrails)和[用 hook 兜底](/docs/guardrails/hooks)。
+
+## 常见坑
+
+- [不让 agent 动 git 历史](/docs/pitfalls/git-history-no-surgery)
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+
+## 相关
+
+- [三层护栏](/docs/guardrails)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [密钥与配置：别让工具覆盖你的设置](/docs/guardrails/secrets)
+- [小工具：30 分钟起步](/docs/tool)

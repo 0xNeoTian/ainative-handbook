@@ -1,0 +1,112 @@
+---
+title: superpowers 与 Matt：完整对比
+description: 自动注入流程 vs 手动调用 + 沉淀文档：用了大半年 superpowers 之后为什么开始换
+evidence: trial
+tier: [product]
+stage: cross
+tweet: 我用了大半年 superpowers，它最大的价值是不让 agent 直接上手改代码。2026 年 10 月起我切到 Matt Pocock 的 skills 试用：没有 hook、编排类手动调用、先拷问对齐、产物留在仓库。两者没有谁更好，区别在于谁来决定什么时候走流程。
+updated: 2026-10-17
+basis: 2026-04 至 2026-10 的会话记录与复盘
+---
+
+两者没有谁更好，区别在于**谁来决定什么时候走流程**。superpowers 在会话一开始就自动接管，默认强烈引导你走完“头脑风暴 → 计划 → TDD → 审查”；Matt Pocock skills 什么都不注入，编排类的 skill 只有你敲了才会跑，产物（术语表、ADR、Issue）留在仓库里给下一次会话用。我用了大半年（约 7 个月）superpowers，2026-10 起切到 Matt 试用。
+
+<Callout type="info" title="版本">
+本页基于 superpowers v7.0.0 和 mattpocock-skills v1.3.1（截至 2026-10，两者 GitHub 星数都在 29 万以上）。细节变化很快，以官方仓库为准。
+</Callout>
+
+## 两种设计哲学
+
+**superpowers：自动注入，强引导流程。** 它带一个 SessionStart hook，每次启动、`/clear` 或上下文压缩之后，都把 using-superpowers 这个 skill 的全文注入上下文。核心规则是：只要有 1% 的可能某个 skill 适用，就必须先调用它，而且流程类 skill 优先。一个需求进来，会被依次带过头脑风暴、worktree 隔离、详细计划、强制 TDD、子 agent 执行、代码审查关卡，最后收尾分支，目标是让 agent 长时间自主运行也不走偏。注意这是注入的提示词，不是机械限制：模型多数时候会照做，但没有东西能硬性拦住它跳步；真正的机械关卡要靠 hook、权限规则和 CI，另外配置。
+
+**Matt Pocock skills：手动调用，跨会话沉淀。** 没有 hook，什么都不注入。27 个 skill 分成两类：16 个编排类（grill-me、to-spec、to-tickets、implement、wayfinder、handoff 等）在 frontmatter 里设了 `disable-model-invocation: true`，模型看不到也调不动，只有你敲 `/mattpocock-skills:<name>` 才会跑；11 个纪律类（tdd、diagnosing-bugs、code-review、grilling 等）模型可以在合适的时候自动调用。Matt 在 [README](https://github.com/mattpocock/skills) 开头就说：GSD、BMAD、Spec-Kit 这类方法靠“接管流程”来帮你，代价是拿走你的控制权，流程本身出了问题也很难修。
+
+## 对比表
+
+| | superpowers | Matt Pocock skills |
+|---|---|---|
+| 触发方式 | SessionStart hook 自动注入；“1% 规则”让模型几乎在每个任务前先找 skill | 没有 hook；编排类只能手动 `/mattpocock-skills:<name>`，纪律类可被模型自动调用 |
+| 流程强制力 | 强引导：注入的规则要求先调 skill 再动手，但这是提示词，不是机械限制 | 弱：跳过 skill 没有任何东西拦你，纪律要靠 CLAUDE.md 和 hook 自己补 |
+| 产物与沉淀 | 每个任务一份设计文档和计划（默认在 `docs/superpowers/`），服务这一次执行，做完即止 | 术语表 `GLOSSARY.md`、ADR（`docs/adr/`）、Issue 跨会话累积，后续 skill 会自动读；交接文档写到系统临时目录，不进仓库 |
+| 与其他技能共存 | 难：会话一开始就接管，和其他流程类 skill、自建 SOP 抢触发 | 好：编排类不会自己触发；纪律类（tdd、diagnosing-bugs、code-review）仍可能和别的同类 skill 重叠 |
+| 子 agent 与长时间执行 | 核心能力：每个任务派新的子 agent 执行和审查，能连续跑很久 | 部分 skill 用并行子 agent；没有统一的长时间执行框架 |
+| 适合的人和场景 | 想把纪律交给工具；大计划要长时间自主执行；团队要统一流程 | 想自己掌舵；需求常不清楚、要先对齐；重视长期沉淀；已有自建 SOP |
+| 上下文成本 | 常驻约 850 token（skill 描述），另加 hook 每次注入的 using-superpowers 全文（约 3 KB）；单次触发约 1k–12k token | 常驻约 1,650 token（`claude plugin details` 估算，含 16 个只能手动调用的 skill 描述，实际进入上下文的更少）；单次触发都在 4.2k token 以内 |
+
+成本数字来自 `claude plugin details <插件>@claude-plugins-official` 的估算，有两处要校正：superpowers 的 hook 被记为“不占模型上下文”，其实每次都注入 using-superpowers 全文；Matt 那 16 个只能手动调用的 skill 描述被算进了常驻，按官方文档并不进上下文，分项相加后真正进上下文的约 870 token。两者都在一两千 token 以内，差别不在 token，而在谁来决定流程。
+
+## superpowers：用了大半年的真实感受
+
+<Evidence kind="lived" /> **最有价值的一点：强制走流程，不准直接上手改。** 这大半年里我好几次对 agent 不满，原因都一样：结果是对的，但它跳过流程直接改了代码，没留 spec 和 plan，事后没法审计、没法交接，也没法让别人 review（见[实质改动先留文档再动手](/docs/pitfalls/process-before-code)）。即使开着 superpowers，agent 也会跳过流程，我反复纠正的正是这个；它的价值是把“先走流程”写成了默认，我纠正时有据可依。
+
+我用得最多的是下面几个。两份记录略有不同：最近 30 天的调用记录里排前三的是 writing-plans、systematic-debugging、executing-plans；更早的会话和复盘里出现最多的是 writing-plans、brainstorming、subagent-driven-development。
+
+- **writing-plans**：把 spec 拆成一步一步的计划，每一步都有可检查的结果，后面的实现和审查都有依据
+- **systematic-debugging**：先找到根因再动手修，不允许“改改试试”
+- **executing-plans**：严格按计划逐个任务执行，不自由发挥
+- **brainstorming**：动手前先把需求问清楚、写成设计，再进入计划
+- **subagent-driven-development**：按计划把任务一个个派给子 agent 实现，每个任务做完都审一遍
+
+**不好的地方：会话一开始就接管。** 注入的指令要求“回答任何问题之前先检查 skill”，一句简单的提问也可能被拉进完整的头脑风暴。更麻烦的是抢触发：我有一批自建的运营 SOP skill（打包、部署、上游合并、成员入职），而 superpowers 的引导明确规定流程类 skill 优先，我的 SOP 随时可能被它抢先接管。
+
+公平地说，superpowers 一直在改进。2026-10 发布的 v7.0.0 重做了 brainstorming：先问清你要什么，再按工作量分档：简单的直接做，小改动在对话里对齐，项目级的才写设计文档。我停用时 v7 刚发布，上面这些缺点主要来自之前的版本。
+
+## Matt Pocock skills：试用到现在
+
+<Evidence kind="trial" /> **拷问式对齐。** grilling 按轮次提问：每一轮把当前能问的问题一次问完，每题附上推荐答案，你回“是”就采纳推荐；需要查的事实它自己派子 agent 去查，只把决定留给你。这本手册就是这样定下来的：我先用 `/mattpocock-skills:grilling` 被拷问了一轮又一轮，读者是谁、公开边界在哪、流程引擎选哪个、可信度怎么标，全部拍板之后才开始写。
+
+**沉淀。** `/mattpocock-skills:grill-with-docs` 边问边更新术语表和 ADR；之后 tdd、to-spec 等 skill 会先读术语表和 ADR，按项目自己的词汇命名。这对我很有吸引力：我半年攒了 70 多篇复盘，沉淀很勤，但很少回流到 agent 每次开工都会读的地方，术语表和 ADR 至少是一条现成的回流通道。
+
+**审查分两轴。** code-review 派两个并行子 agent，分别查“是否符合仓库规范”和“是否忠实实现了 spec”，互不影响。
+
+试用中看到的不足：
+
+- **模型调不动编排类 skill**：在 CLAUDE.md 里写“先运行 to-spec”没用，模型只会请你自己去敲，规则要写成“停下来提醒我”
+- **spec 默认发到 Issue**：和“以仓库为准”的习惯冲突，需要改一下约定
+- **没有“完成前验证”的对应物**：要用 hook 和 gstack `/qa` 补
+
+这几条的补法都在[迁移页](/docs/workflow/migrate)。
+
+## 为什么切
+
+1. **业界的重心在变：从“让 agent 自己跑”到“先对齐、再沉淀”。** Anthropic 的 [AI-native SDLC playbook](https://claude.com/resources/articles/the-ai-native-sdlc-playbook) 第一招就是先写一份很短、进版本控制的 intent.md；OpenAI 的 [Harness engineering](https://openai.com/index/harness-engineering/) 强调给 agent 一张地图而不是一本厚手册，仓库就是唯一事实来源。Matt 的产物模型正好落在这条线上
+2. **手动调用更容易共存。** 我同时用 gstack 做上线流水线，还有一批自建 SOP skill。只要会话里有一套“1% 就必须调用”的引擎，别的 skill 就总在和它抢
+3. **想验证拷问式对齐是否更适合创始人的决策。** 我的瓶颈早就不是写代码，而是“到底要做什么”。grilling 把查事实的活交给 agent，把每个决定留给我。这本手册就是第一个试验品
+
+**最大的风险：失去自动强制。** 我在 superpowers 上最看重的恰恰是强制。所以切换不是装上就完：我的补法是用 CLAUDE.md 硬规则、hook 和合并关卡把强制补回来，每个任务记一行数据，30 天后按数据决定留谁。
+
+## 业界怎么看
+
+- **nocoders**（Mick Brzeziński，2026-06）：把两者称为[两种相反的押注](https://www.nocoders.com/blog/superpowers-vs-pocock-agent-skills/)，superpowers 像自动驾驶，Matt 像助力转向：前者治“模型爱跳步骤”，后者给“已经有判断力、要杠杆而不是监护人”的人。它也直说了各自的毛病：superpowers 会把一句话的问题拖进完整的头脑风暴；Matt 的纪律是可选的，跳过就没人拦
+- **Zenn 上 kanagen 的对比**（2026-06）：[superpowers 是“给 agent 强制纪律的装置”，Matt 是“把工程基本功做成 skill”](https://zenn.dev/kanagen/articles/claude-code-skills-superpowers-vs-mattpocock)。前者的产物按任务消耗，后者跨会话累积；两套哲学冲突，作者建议二选一
+- **note 上アサヒ的切换记录**（2026-07）：[从 superpowers 换到 Matt](https://note.com/spocal/n/nd17a3275b6f3) 之后 token 和时间都省了，结果“足够好”，记录都留在 GitHub Issues 里也不容易忘进度。他也承认 superpowers 能自主跑一个多小时，计划清楚到可以直接交给更便宜的模型执行
+
+这几篇写于 superpowers 6.x、Matt 1.0 前后，功能已有变化，但结论一致：取决于你要防的是哪种失败。
+
+## 选择建议
+
+| 你的情况 | 选 |
+|---|---|
+| 主要问题是 agent 跳步骤、不写测试、过早宣布完成 | superpowers |
+| 要让 agent 长时间自主执行一个大计划（子 agent 并行、worktree 隔离） | superpowers |
+| 团队需要一套不靠每个人自觉的统一流程 | superpowers |
+| 主要问题是“做出来的不是我要的”，需要先对齐 | Matt |
+| 想自己掌舵、按需调用，重视术语表和 ADR 这类长期沉淀 | Matt |
+| 已有自建 SOP 或 gstack 这类流水线，要和流程引擎共存 | Matt |
+
+两套都想要也可以，但**同一个项目里只让一套自动触发**：按项目选主引擎，另一套停用或只许手动调用，配置见[迁移页](/docs/workflow/migrate)。
+
+## 常见坑
+
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)
+- [实质改动先留文档再动手](/docs/pitfalls/process-before-code)
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)
+
+## 相关
+
+<Cards>
+  <Card title="从 superpowers 迁到 Matt" href="/docs/workflow/migrate" description="映射表、两套共存的配置、补回强制、30 天评估" />
+  <Card title="流程引擎、流水线与专项工具" href="/docs/workflow" description="三类工具各管一摊，避免抢触发" />
+  <Card title="gstack：上线流水线怎么用" href="/docs/workflow/gstack" description="二审、安全审计、真实浏览器、发版" />
+  <Card title="spec 模板" href="/docs/templates/spec" description="以 intent 开头，含 EARS 验收标准" />
+</Cards>

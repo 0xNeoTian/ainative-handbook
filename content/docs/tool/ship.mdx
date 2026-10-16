@@ -1,0 +1,146 @@
+---
+title: 小工具上线：静态站部署到 Cloudflare
+description: 用 Workers 静态资源部署静态站：一份 wrangler.jsonc、一条部署命令，再绑定自己的域名
+evidence: lived
+tier: [tool]
+stage: ship
+updated: 2026-10-16
+---
+
+静态站、报告、落地页这类小工具，部署到 Cloudflare Workers 的静态资源最省事：**构建出静态文件，写一份 `wrangler.jsonc`，运行 `wrangler deploy`，再在 `routes` 里挂上自己的域名**。不需要写任何 Worker 代码。本站就是这样部署的。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+### 构建出静态文件
+
+不同框架的输出目录不同：Next.js 在 `next.config` 里设 `output: 'export'`，构建产物在 `out/`；Vite、Astro 默认输出到 `dist/`。确认输出目录里有 `index.html`，最好也有一个 `404.html`。
+
+</Step>
+<Step>
+
+### 写 wrangler.jsonc
+
+在项目根目录新建 `wrangler.jsonc`：
+
+```jsonc
+{
+  "name": "my-tool",
+  // 写你创建这份配置的日期
+  "compatibility_date": "2026-10-16",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  }
+}
+```
+
+只部署静态资源时不需要 `main`（Worker 脚本），有 `assets.directory` 就够了。`not_found_handling` 决定访问不存在的路径时怎么办：
+
+| 取值 | 行为 | 适合 |
+|---|---|---|
+| `404-page` | 返回最近的 `404.html`，状态码 404 | 静态站、文档站（官方对静态生成站点的推荐） |
+| `single-page-application` | 返回 `index.html`，状态码 200 | 用前端路由的单页应用 |
+| `none`（默认） | 直接返回 404 | 不在乎 404 页面时 |
+
+另一个选项 `html_handling` 保持默认的 `auto-trailing-slash` 即可：`foo.html` 用不带斜杠的地址访问，`foo/index.html` 用带斜杠的地址访问。
+
+</Step>
+<Step>
+
+### 登录并部署
+
+```bash
+bun add -d wrangler
+bunx wrangler login
+bunx wrangler deploy
+```
+
+第一次部署会得到一个 `workers.dev` 子域名下的地址，先在那里检查一遍页面。
+
+</Step>
+<Step>
+
+### 绑定自己的域名
+
+前提是域名已经托管在 Cloudflare（DNS 在 Cloudflare 上）。在 `wrangler.jsonc` 里加上 `routes`，再部署一次：
+
+```jsonc
+{
+  "name": "my-tool",
+  "compatibility_date": "2026-10-16",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "tool.example.com", "custom_domain": true }
+  ]
+}
+```
+
+`custom_domain: true` 表示把整个主机名交给这个 Worker，Cloudflare 会自动创建 DNS 记录并签发证书。注意三点：
+
+- 这个主机名上如果已经有一条 CNAME 记录，绑定会失败，先删掉旧记录
+- `pattern` 只写主机名，不能带路径，也不能用通配符
+- 根域名和 `www` 是两个主机名，要么各绑一次，要么给其中一个做重定向
+
+</Step>
+<Step>
+
+### 验证
+
+```bash
+curl -sI https://tool.example.com
+curl -s 'https://dns.google/resolve?name=tool.example.com&type=A'
+```
+
+第一条看能不能访问、状态码对不对；第二条用 DoH（DNS over HTTPS）看解析结果。别只用 `dig`：本机代理开着 fake-ip 模式时，`dig` 拿到的是代理伪造的地址，会让你误以为部署失败。最后在浏览器里亲眼打开一次，点一遍主要页面。
+
+</Step>
+</Steps>
+
+## 本站就是这样部署的
+
+这本手册用 Fumadocs（基于 Next.js）做静态导出，构建产物在 `out/`。部署配置和上面的例子几乎一样：`assets.directory` 指向 `./out`，`not_found_handling` 用 `404-page`，`routes` 里挂的是 `ainative.jubao.ai`。整个站点没有一行 Worker 代码，发布就是一次 `wrangler deploy`。
+
+它同时说明了小工具和产品的界线不在技术上：同样的部署方式，这本手册有了读者，就按产品档管理，上线前要过审查。
+
+## 把部署命令放进 ask
+
+部署就是上线，小工具也值得多一次确认。在 `~/.claude/settings.json` 或项目的 `.claude/settings.json` 里：
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(wrangler deploy *)",
+      "Bash(bunx wrangler deploy *)"
+    ],
+    "allow": [
+      "Bash(wrangler whoami)"
+    ]
+  }
+}
+```
+
+两种写法都要列上：规则按命令文本匹配，Claude Code 不会自动去掉 `bunx` 这类前缀，只写 `Bash(wrangler deploy *)` 拦不住 `bunx wrangler deploy`。
+
+## 什么时候换平台
+
+需要服务端渲染、Server Actions、每个 PR 一个预览环境的 Next.js 应用，我放在 Vercel；静态站、边缘 API、定时任务、大文件分发放在 Cloudflare。完整的分工和取舍见[选平台：Vercel 还是 Cloudflare](/docs/product/platform)。
+
+## 常见坑
+
+- [本机代理会让 DNS 检查失真](/docs/pitfalls/dns-fake-ip)
+- [一个域名只挂一个平台](/docs/pitfalls/one-domain-one-platform)
+- [亲眼看到才算完成](/docs/pitfalls/see-it-to-ship)
+
+## 相关
+
+- [选平台：Vercel 还是 Cloudflare](/docs/product/platform)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [小工具的最小护栏](/docs/tool/guardrails)
+- 官方文档：[Workers 静态资源](https://developers.cloudflare.com/workers/static-assets/)、[Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)

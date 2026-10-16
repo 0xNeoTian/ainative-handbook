@@ -1,0 +1,153 @@
+---
+title: 第 0 步：起步
+description: 建仓库、写一页 CLAUDE.md、装流程引擎、配护栏：第一天花一小时，后面每次会话都省事
+evidence: lived
+tier: [product]
+stage: day0
+updated: 2026-10-17
+---
+
+产品档的第一天做四件事：**建仓库、写一页 CLAUDE.md、装好流程引擎、配好护栏**，大约一小时。这些东西每次会话都会用到：第一天不配，以后每次都要口头重复一遍，而且口头要求拦不住误操作。
+
+| 产物 | 人工关卡 | 衡量指标 |
+|---|---|---|
+| 仓库、一页 CLAUDE.md、权限规则 | 你确认 CLAUDE.md 不超过一页，里面没有任何密钥 | 从建仓库到第一次部署用了多久 |
+
+## 怎么做
+
+<Steps>
+<Step>
+
+### 建仓库
+
+```bash
+bun create next-app my-app --yes
+cd my-app
+gh repo create my-app --private --source=. --push
+```
+
+`--yes` 直接用推荐的默认值：TypeScript、ESLint、Tailwind CSS、App Router，并生成一份写给 coding agent 的 AGENTS.md。create-next-app 会顺手做好第一次 git 提交，所以可以直接推到 GitHub。不想让 agent 准备匿名的 Next.js 反馈，加 `--no-agent-feedback`。用 shadcn/ui 的话再跑一次 `bunx shadcn@latest init`。
+
+最后确认 `.gitignore` 里有 `.env*`：密钥只放 `.env.local` 和部署平台的环境变量里。
+
+</Step>
+<Step>
+
+### 写一页 CLAUDE.md
+
+在仓库里打开 Claude Code，运行 `/init` 生成初稿，再手动删到一页以内。只留每次会话都要遵守的东西：
+
+- 技术栈和目录结构，一两行
+- 常用命令：开发、测试、类型检查、lint，每条附一句“正常输出长什么样”
+- 约定：命名、提交信息、文档放哪（`docs/specs/`、`docs/plans/`、`docs/adr/`）
+- 禁区：不许碰的目录、不许跑的命令
+- 指针：更长的说明放进 `docs/`，这里只写路径
+
+create-next-app 生成了 AGENTS.md 的话，在 CLAUDE.md 第一行写上 `@AGENTS.md`。原因：仓库里两个文件都有时，Claude Code 只读 CLAUDE.md，不加这行导入，AGENTS.md 就被忽略了。下次会话运行 `/context`，确认 CLAUDE.md 出现在 Memory files 里。
+
+Anthropic 的 Playbook 给了两条好用的规矩：CLAUDE.md 控制在一页以内；同一个错误 Claude 犯第二次，就往里加一条纠正。模板见[一页 CLAUDE.md](/docs/templates/claude-md)。
+
+</Step>
+<Step>
+
+### 装流程引擎
+
+```bash
+claude plugin install mattpocock-skills@claude-plugins-official
+```
+
+然后在会话里跑一次 `/mattpocock-skills:setup-matt-pocock-skills`，每个仓库只需要一次。它会依次问三件事：
+
+- Issue 记在哪：GitHub Issues、GitLab，或者仓库里的本地 markdown（适合一个人、没有远端的仓库）
+- 分诊标签用什么：默认的五个标签直接接受即可
+- 术语表和 ADR 放哪：默认仓库根目录的 `GLOSSARY.md` 和 `docs/adr/`
+
+结果写进 `docs/agents/` 下的几个说明文件，并在 CLAUDE.md 里加一节 `## Agent skills` 指向它们。以后想改，直接编辑这些文件。<Evidence kind="trial" />
+
+Matt 没有 hook，不会在会话开始时接管流程：16 个编排类 skill 只能手动调用，tdd、diagnosing-bugs 等 11 个纪律类 skill 模型可以自动调用。截至 2026-10，这个插件常驻上下文约 1.6k token，可以用 `claude plugin details mattpocock-skills@claude-plugins-official` 自己看。
+
+</Step>
+<Step>
+
+### 配护栏
+
+项目级的 `.claude/settings.json` 跟着仓库进 git，对这个项目里的每个会话都生效：
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force origin main *)",
+      "Bash(git reset --hard origin/main *)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ],
+    "ask": [
+      "Bash(gh pr merge *)",
+      "Bash(vercel --prod *)",
+      "Bash(wrangler deploy *)",
+      "Bash(bunx wrangler deploy *)"
+    ],
+    "allow": [
+      "Bash(gh pr view *)",
+      "Bash(gh run list *)",
+      "Bash(vercel ls *)"
+    ]
+  }
+}
+```
+
+deny 是绝对不行，ask 是每次都要你确认（合并、上线），allow 是只读命令免确认。删根目录这类对所有项目都通用的 deny 规则放用户级 `~/.claude/settings.json`，见[小工具的最小护栏](/docs/tool/guardrails)。规则按命令文本匹配，`bunx wrangler deploy` 要单独写一条；更多细节见[权限规则：deny、ask、allow](/docs/guardrails/permissions)。
+
+想用一句话生成 hook，可以装 hookify：<Evidence kind="trial" />
+
+```bash
+claude plugin install hookify@claude-plugins-official
+```
+
+然后在会话里写 `/hookify 禁止用 git add 把 .env 开头的文件加进暂存区`。它会生成一个 `.claude/hookify.*.local.md` 规则文件，下一次工具调用就生效；规则可以设为只警告或直接阻止，`/hookify:list` 查看已有规则。
+
+</Step>
+<Step>
+
+### 可选：UI 约定与自动推荐
+
+- 有 UI 的项目，装 ui-contract 管“新功能放页面哪个区域”，安装和用法见[设计：从 intent 到 spec](/docs/product/design)。
+- 新仓库可以跑一次 claude-code-setup：它只读扫描仓库，推荐值得配的 hook、skill、MCP 和 subagent。<Evidence kind="industry" />
+
+```bash
+claude plugin install claude-code-setup@claude-plugins-official
+```
+
+装好后问一句“这个仓库适合配哪些自动化”，或者直接运行 `/claude-code-setup:claude-automation-recommender`。用完就停用，免得它一直占上下文：`claude plugin disable claude-code-setup@claude-plugins-official`。
+
+</Step>
+</Steps>
+
+装了[本手册插件](/docs/reference/plugin)的话，`/ainative:new-project` 会按档位把这一页的步骤串起来跑一遍，每个写操作先问你。<Evidence kind="trial" />
+
+## CLAUDE.md、skill、hook 各放什么
+
+| 放哪 | 放什么 | 性质 | 例子 |
+|---|---|---|---|
+| CLAUDE.md | 每次会话都要知道的：技术栈、命令、约定、禁区、文档指针 | 上下文，不是强制配置 | 测试用 `bun test`；spec 放 `docs/specs/` |
+| skill | 某一类任务才用到的做法 | 按需加载，是建议 | 发版清单、部署步骤、写复盘的格式 |
+| 权限规则、hook | 必须守住、而且能机械判断的规则 | 确定性执行，不靠模型自觉 | 禁止强推 main；上线前必须确认 |
+
+判断顺序：先问“能不能机械判断”。能，就下沉成权限规则或 hook；不能，再问“是不是每次都要知道”。是，进 CLAUDE.md；只在某类任务里用到，做成 skill。
+
+这个顺序有官方依据。Claude Code 文档写明：CLAUDE.md 被当作上下文，而不是强制执行的配置，要无论如何都拦住某个操作，用 PreToolUse hook。Anthropic 的 Playbook 也说 skill 是建议性的，必须守住的规则要再配一个 hook 或 PR 检查。我的经验是，CLAUDE.md 写得越长，里面每一条被遵守的概率越低。
+
+## 常见坑
+
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)：我曾经装了 39 个插件，按最近 30 天的真实调用统计精简到 16 个
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)：两套流程框架都开着时，一句“帮我 debug”可能被任意一套接走
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)：权限规则和 hook 可能一次就全部消失
+
+## 相关
+
+- [一页 CLAUDE.md 模板](/docs/templates/claude-md)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [从 superpowers 迁到 Matt](/docs/workflow/migrate)：两套流程引擎共存时怎么配
+- [选平台：Vercel 还是 Cloudflare](/docs/product/platform)
+- 下一步：[规划：先写 intent](/docs/product/plan)

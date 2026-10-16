@@ -1,0 +1,128 @@
+---
+title: 防护规则会悄悄失效
+description: 护栏被上游合并冲掉、被工具整份覆盖时不会报错。用体检脚本和 CI 断言，让它失效时有人知道
+type: pitfall
+evidence: lived
+tier: [product, org]
+stage: maintain
+rule: 护栏要有体检：用脚本定期确认规则、hook 和备份步骤都还在
+tweet: 本地库被清空后，我加了三层防护：脚本先备份、权限要确认、hook 自动备份。半年后排查环境才发现三层全没了，原因只有两个：备份脚本被一次上游合并冲掉；权限规则和 hook 的挂载，被切换工具的一次整份覆盖一起带走。护栏失效不会报错，所以得定期体检。
+updated: 2026-10-17
+basis: 2026-05 复盘、2026-10 工作记录
+---
+
+## 发生了什么
+
+本地数据库被一条破坏性的数据库命令清空之后（见[本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)），我加了三层防护：
+
+- 应用层：reset 脚本先 `pg_dump` 备份，备份失败就停
+- 权限层：reset 命令设成 ask，执行前必须我确认
+- hook 层：PreToolUse hook 碰到破坏性数据库命令，先自动备份到本地目录
+
+半年后，2026 年 10 月，一次环境排查时顺手查了一下：三层全没了，原因却只有两个。
+
+- 脚本里的备份步骤，在两个多月前的一次上游大合并中被冲掉，回到了上游原样
+- 权限规则和 hook 的挂载，在排查当天的一次切换模型供应商时，被切换工具连同整份 `~/.claude/settings.json` 一起重写掉了（见[切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)）。hook 脚本文件还在，只是已经没挂在任何事件上
+
+事后对账，两个时间点都找得到。备份脚本那层没了两个多月，期间没有任何报警；权限和 hook 那两层是当天丢的，要不是“插件全关”这个症状太显眼，同样不会有人发现。更尴尬的是，当初的恢复手册里写过检查命令，可它只是一段文字，没有任何机制去跑；而且查 hook 的那条只看脚本文件在不在，就算有人跑，也查不出它没挂上。
+
+## 为什么会这样
+
+护栏天生有个毛病：生效时什么也不发生，失效时也什么都不发生。没有报错，没有告警，直到下一次事故。
+
+三层只死于两条路径，根子却是同一个：护栏写在了“别人也会写”的地方。
+
+- 上游也会改的文件：合并时一旦取了上游版本，定制改动就没了
+- 会被工具整份重写的配置：工具不知道哪几行是护栏
+- 实现和注册分开的机制（这让第三层死得更隐蔽）：脚本文件在，不等于 hook 在；挂载关系写在 `settings.json` 里，跟着配置一起丢
+
+写在手册里的检查命令也不算护栏，文字不会自己执行。
+
+## 怎么做
+
+这套体检是事故之后补上的，还在打磨。<Evidence kind="trial" />
+
+要检查行为，不要只检查文本。`grep` 到 `pg_dump` 不代表备份还会执行，它可能躺在注释里，也可能属于别的 target；脚本文件还在，也不代表 hook 会被触发。
+
+<Steps>
+<Step>
+
+**写体检脚本**，放在项目的 `.claude/hooks/guardrail-check.sh`。三项都看行为，缺一项报一项，全部通过时不输出：
+
+```bash
+#!/usr/bin/env bash
+s="$HOME/.claude/settings.json"   # 规则写在哪个文件，就查哪个
+hook="$HOME/.claude/hooks/db-backup.sh"
+miss() { echo "护栏缺失：$1"; }
+
+# 1. ask 规则：按原文精确匹配
+jq -e '(.permissions.ask // []) | index("Bash(make db-reset *)")' "$s" >/dev/null || miss "make db-reset 的 ask 规则"
+
+# 2. 备份 hook：已挂载，并且喂一条模拟输入时真的会调用 pg_dump（pg_dump 和 HOME 都换成临时的）
+jq -e '[.hooks.PreToolUse[]?.hooks[]?.command | strings] | any(test("db-backup"))' "$s" >/dev/null \
+  || miss "备份 hook 没挂到 PreToolUse"
+t=$(mktemp -d); printf '#!/bin/sh\ntouch "%s/called"\n' "$t" > "$t/pg_dump"; chmod +x "$t/pg_dump"
+echo '{"tool_input":{"command":"make db-reset"}}' \
+  | HOME="$t" PATH="$t:$PATH" DATABASE_URL=postgres://guard-check "$hook" >/dev/null 2>&1
+[ -f "$t/called" ] || miss "备份 hook 收到 reset 命令时没有调用 pg_dump"
+rm -rf "$t"
+
+# 3. reset 目标：用 make -n 看实际步骤，pg_dump 必须排在 reset 之前
+steps=$(make -n --no-print-directory -C "$CLAUDE_PROJECT_DIR" db-reset 2>/dev/null | grep -v '^[[:space:]]*#')
+d=$(grep -n 'pg_dump' <<<"$steps" | head -1 | cut -d: -f1)
+r=$(grep -n 'reset-db' <<<"$steps" | head -1 | cut -d: -f1)   # 换成你的 reset 命令
+[ -n "$d" ] && [ -n "$r" ] && [ "$d" -lt "$r" ] || miss "db-reset 不再先备份"
+exit 0
+```
+
+`make -n` 只打印、不执行，但带 `+` 前缀或含 `$(MAKE)` 的行照样会执行，reset 目标里别这么写。
+
+</Step>
+<Step>
+
+**挂到项目级 `.claude/settings.json` 的 SessionStart 上**。每次开会话跑一次，输出直接进入 Claude 的上下文。这个文件进 git，切换工具不会动它，有人改了也能在 diff 里看到：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guardrail-check.sh" }] }
+    ]
+  }
+}
+```
+
+</Step>
+<Step>
+
+**上游也会改的文件，在 CI 里模拟一次备份失败**。CI 用的是一次性数据库，可以真跑：把 `pg_dump` 换成必然失败的假命令，断言 reset 停了下来。合并把定制改动冲掉，CI 就红：
+
+```yaml
+- name: 护栏断言：备份失败时 reset 必须停下
+  run: |
+    # DATABASE_URL 指向 CI 里的一次性数据库
+    make -n db-reset > /dev/null
+    psql "$DATABASE_URL" -c 'create table guard_marker (id int)'
+    shim=$(mktemp -d) && printf '#!/bin/sh\nexit 1\n' > "$shim/pg_dump" && chmod +x "$shim/pg_dump"
+    PATH="$shim:$PATH" make db-reset && { echo "备份失败了，reset 却照样执行"; exit 1; }
+    psql "$DATABASE_URL" -c 'select 1 from guard_marker'   # 标记表还在，说明 reset 没跑
+```
+
+</Step>
+<Step>
+
+**最关键的几条放进托管设置**。macOS 上是 `/Library/Application Support/ClaudeCode/managed-settings.json`，优先级最高，写入要管理员权限，普通工具改不到。在 Claude Code 里运行 `/status`，Setting sources 一行能看到它有没有生效。
+
+</Step>
+</Steps>
+
+本手册插件里的 `/ainative:doctor` 也会做这类检查。
+
+## 相关
+
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [三层护栏](/docs/guardrails)
+- [本地数据库也要按生产对待](/docs/pitfalls/local-db-is-prod)
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)
+- [本手册的 Claude Code 插件](/docs/reference/plugin)

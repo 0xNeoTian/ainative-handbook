@@ -1,0 +1,68 @@
+---
+title: 网络报错先查远端
+description: 超时和 503 只说明“结果未知”，不说明“失败”。先查远端再决定下一步，免得重复推送或把 tag 打错地方
+type: pitfall
+evidence: lived
+tier: [product, org]
+stage: ship
+rule: 网络类状态变更失败后，先确认远端真实状态，再决定重试还是放弃
+tweet: 一次发版，合并 PR 时 GitHub 返回 503，响应没回来。我没核实就接着打了 tag，其实合并已经成功，tag 却打在了合并前的提交上，只好删 tag 重打、删 release 重跑。超时只代表“不知道成没成”。现在网络报错后，先用 git ls-remote 或 gh api 查远端，再决定重试还是继续。
+updated: 2026-10-17
+basis: 2026-08 工作记录
+---
+
+## 发生了什么
+
+一次发版，合并 PR 时 GitHub 返回 503，响应没有回来。那天晚上 GitHub 抖了好几个小时。
+
+我没去核实，就接着打了 tag。其实合并已经成功了，tag 却打在了合并前的提交上。只好删掉 tag 重打；已经生成的 release 又撞上“资产已存在”，再删掉重跑。
+
+## 为什么会这样
+
+超时和 503 的真实含义是“结果未知”。请求可能根本没到，也可能服务端已经处理完，只是响应在网关或网络上丢了。
+
+重推同一个 ref 往往无害，但发版流程里有不少动作不是幂等的：脚本按“最新版本号加一”算出新 tag，调用 API 新建 release，tag 一推上去就触发发布流水线。agent 在这里尤其容易出事：看到报错，第一反应是重试，或者换个办法绕过去，比如换个 tag 名、加 `--force`。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**先查远端，再决定**。分支、tag、release、流水线各有查法：
+
+```bash
+git ls-remote origin refs/heads/main    # 远端分支指向哪个提交，和 git rev-parse HEAD 对比
+git ls-remote origin refs/tags/v1.4.2   # 远端有没有这个 tag
+gh release view v1.4.2                  # release 建了没有
+gh run list --limit 5                   # 发布流水线是不是已经跑起来了
+```
+
+</Step>
+<Step>
+
+**按结果分三条路**。加上 `--exit-code`，“没找到”和“连不上”的退出码就不一样了：
+
+```bash
+tag=v1.4.2
+git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null
+case $? in
+  0) echo "远端已有 $tag，不要重试" ;;
+  2) echo "远端没有 $tag，用同一个名字重推" ;;
+  *) echo "远端也查不到，等网络恢复，什么都别动" ;;
+esac
+```
+
+</Step>
+<Step>
+
+**写进 CLAUDE.md 和子 agent 提示词**：网络类状态变更（push、打 tag、建 release、部署）失败后，先查远端；不许换名重试，不许用 `--force` 绕过。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [发版靠清单，不靠感觉](/docs/pitfalls/release-checklist)
+- [不让 agent 动 git 历史](/docs/pitfalls/git-history-no-surgery)
+- [发布：AI 审查，人来批准](/docs/product/ship)
+- [子 agent 提示词模板](/docs/templates/subagent-prompt)

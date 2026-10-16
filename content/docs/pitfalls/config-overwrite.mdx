@@ -1,0 +1,78 @@
+---
+title: 切换工具会整份覆盖设置
+description: 用模型供应商切换工具切回官方后，权限规则、hook、插件启用状态全丢了，表面症状只是“插件都关了”
+type: pitfall
+evidence: lived
+tier: [tool, product]
+stage: day0
+rule: 用过配置切换工具，先查权限、hook、插件三项；关键护栏放托管设置
+tweet: 我用一个模型供应商切换工具切回官方模型，打开 Claude Code 发现插件全关了。一查才知道 ~/.claude/settings.json 被整份重写，16 条 deny、25 条 ask 和一个备份 hook 也一起没了，护栏静悄悄失效。现在每次切换完，先核对权限、hook、插件这三项还在不在。
+updated: 2026-10-17
+basis: 2026-10 工作记录
+---
+
+## 发生了什么
+
+有段时间我用一个模型供应商切换工具，在官方模型和第三方模型之间来回切。有一次从第三方切回官方，打开 Claude Code，发现所有插件都是关着的。
+
+查下去才发现 `~/.claude/settings.json` 被整份重写了：除了供应商相关的配置，权限规则（16 条 deny、25 条 ask）、hook、`enabledPlugins` 全部消失。“插件都关了”只是最显眼的症状，真正危险的是护栏跟着一起没了，而且没有任何提示（这一层护栏的下落，见[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)）。
+
+## 为什么会这样
+
+这类工具（比如 CC Switch）的工作方式，就是改写 `~/.claude/settings.json` 里的供应商配置：API 地址、密钥、模型。我遇到的那次，切换工具把 `~/.claude/settings.json` 整份重写了，权限、hook、插件启用状态全丢；这类工具的新版本声称只改连接相关字段。不管是哪种，切换后都要检查 permissions、hooks、enabledPlugins 还在不在。
+
+偏偏用户级设置又是多数人放全局护栏的地方，一次“切模型”就可能顺手拆了护栏，而且没有任何报错。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**切换前备份，切换后只比护栏字段**。这个文件的 `env` 里可能有供应商的密钥，备份设成只有自己能读，对比时也只取护栏相关的字段，别把密钥打到屏幕或日志里：
+
+```bash
+# 切换前：备份，权限 600
+install -m 600 ~/.claude/settings.json ~/.claude/settings.backup.json
+# 切换后：只比较 permissions、hooks、enabledPlugins
+diff <(jq -S '{permissions, hooks, enabledPlugins}' ~/.claude/settings.backup.json) \
+     <(jq -S '{permissions, hooks, enabledPlugins}' ~/.claude/settings.json)
+```
+
+</Step>
+<Step>
+
+**没有备份时，至少看一眼这三项**。哪一项变成 `null`，就是被冲掉了：
+
+```bash
+jq '{permissions, hooks, enabledPlugins}' ~/.claude/settings.json
+```
+
+</Step>
+<Step>
+
+**最关键的护栏放进托管设置**。它优先级最高，写入要管理员权限，切换工具改不到。macOS 是 `/Library/Application Support/ClaudeCode/managed-settings.json`，Linux 是 `/etc/claude-code/managed-settings.json`：
+
+```json
+{
+  "permissions": {
+    "deny": ["Bash(rm -rf ~)", "Bash(git push --force origin main *)"]
+  }
+}
+```
+
+在 Claude Code 里运行 `/status`，Setting sources 一行能确认它已生效。
+
+</Step>
+<Step>
+
+**体检 hook 别放在会被覆盖的文件里**。放在 `~/.claude/settings.json` 的体检 hook，会和护栏一起被冲掉。放进项目级 `.claude/settings.json` 或托管设置，每次开会话自动检查。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [密钥与配置：别让工具覆盖你的设置](/docs/guardrails/secrets)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)

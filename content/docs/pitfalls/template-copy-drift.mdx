@@ -1,0 +1,76 @@
+---
+title: 模板复制后会各自漂移
+description: 第二个组织的规则文件复制自第一个，半年后 6 处引用指向不存在的文件，复审日期也过期半年
+type: pitfall
+evidence: lived
+tier: [org]
+stage: maintain
+rule: 共用规则做成可继承的模板（插件），不要复制
+tweet: 第二个组织起步时，我把第一个组织的 ops 规则文件整份复制了过去。半年后回头看：6 处引用指向根本不存在的文件，“下次 review 日期”两边一字不差，而且已经过期半年。复制完的那一刻，两份就开始各走各路。共用的规则做成能继承的模板，别复制。
+updated: 2026-10-16
+basis: 2026-10 工作记录
+---
+
+## 发生了什么
+
+我同时运营两个组织。第二个组织搭 ops 仓时，我把第一个组织的规则文件整份复制过去，里面有 agent 的职责、审查流程、红线清单，改了改名字就开始用。
+
+半年后做体检，这份文件里有 6 处引用指向不存在的文件：它们是第一个组织里的路径，在第二个组织从来没建过。文件末尾的“下次 review 日期”两边一字不差，而且已经过期半年。复制时连日期一起抄了过来，之后两边谁也没复审。
+
+## 为什么会这样
+
+复制只发生一次，之后两份文件各自演化：第一个组织修了规则，第二个组织收不到；第二个组织踩了新坑，第一个组织也不知道。没有人负责“同步”，漂移就是默认结果，不是意外。
+
+复制品里还夹带着只对原环境成立的东西：路径、文件名、日期。它们看起来像规则，其实是噪音，而 agent 会把噪音也当成规则来执行。指向不存在文件的引用不会报错，agent 读不到就跳过，没人察觉。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**通用部分抽成一个 ops 插件**（下面叫 `ops-kit`）：agent 定义、`/new-adr` 和 `/new-retro` 这类 SOP skill、审查流程、通用的拦截和备份 hook、体检脚本。插件带不了 deny / ask 规则，这部分交给 hook，或者由 setup skill 写进各仓库的设置。放进团队私有的插件市场，一个 git 仓库就够。
+
+</Step>
+<Step>
+
+**各组织只写差异，用 `dependencies` 继承模板**。每个组织建一个自己的 ops 插件（比如 `org-a-ops`），在它的 `.claude-plugin/plugin.json` 里用 `dependencies` 声明依赖 `ops-kit`，启用组织插件时通用模板会一起启用（结构见[让 ops 和项目一起进化](/docs/org/evolve)）。再在 ops 仓的 `.claude/settings.json`（进 git）里声明市场、启用组织插件：
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "team-tools": {
+      "source": { "source": "github", "repo": "your-org/claude-plugins" }
+    }
+  },
+  "enabledPlugins": {
+    "org-a-ops@team-tools": true
+  }
+}
+```
+
+插件用相对路径放在市场仓库里时，成员信任这个目录后就会自动加载。模板升级只改 `ops-kit` 一处，各组织运行 `claude plugin update ops-kit@team-tools` 拿到新版。
+
+</Step>
+<Step>
+
+**给规则文件加一道引用体检**，放进 CI 或园丁任务，引用的文件不存在就报出来：
+
+```bash
+grep -oE '`[A-Za-z0-9_./-]+\.(md|json|sh)`' CLAUDE.md | tr -d '`' | sort -u \
+  | while read -r p; do [ -e "$p" ] || echo "引用失效: $p"; done
+```
+
+</Step>
+<Step>
+
+**复审日期交给园丁**。每周扫一遍过期的“下次 review 日期”，过期就提醒或直接提 PR。<Evidence kind="trial" />
+
+</Step>
+</Steps>
+
+## 相关
+
+- [让 ops 和项目一起进化](/docs/org/evolve)
+- [组织 ops agent 的五个组成部分](/docs/org/ops-agent)
+- [跨仓链接用完整地址](/docs/pitfalls/absolute-cross-repo-links)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)

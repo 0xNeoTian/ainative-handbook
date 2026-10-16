@@ -1,0 +1,89 @@
+---
+title: 同一时间只让一套流程自动接管
+description: 两套流程框架同时开着，一句“帮我 debug”可能被不同框架抢走。只留一套自动触发，其余改成手动调用
+type: principle
+evidence: industry
+tier: [product]
+stage: day0
+rule: 只让一套流程引擎自动触发，其余框架只留手动调用
+tweet: 2026-10 准备从 superpowers 切到 Matt Pocock skills 时，两套插件同时装着。按官方文档，superpowers 在会话开始注入流程，Matt 有 11 个 skill 可以被模型自动调用，两者会争同一类请求，比如一句“帮我 debug”。所以切换当天我先停用 superpowers，再开始试 Matt。规矩：只留一套自动触发。
+updated: 2026-10-17
+basis: 2026-10 切换流程引擎时的分析
+---
+
+## 发生了什么
+
+这张卡没有对应的事故，来自 2026-10 我准备从 superpowers 切到 Matt Pocock skills 时的分析。那时两套插件同时装着。按两边的官方文档，superpowers 会在会话开始时注入流程引导，Matt 有 11 个 skill 允许模型自动调用，两者会争同一类请求：同一句“帮我 debug”，可能被这套接走，也可能被那套接走；同一个项目里前后两次走的是两套流程，留下的记录也对不上。所以切换当天，我先停用了 superpowers，再开始试 Matt。
+
+## 为什么会这样
+
+skill 能被模型自动触发，靠的是描述匹配。以我装过的为例：superpowers 的 `systematic-debugging` 写的是“遇到任何 bug、测试失败或异常行为时使用”，Matt Pocock skills 的 `diagnosing-bugs` 写的是“用户说 diagnose、debug this 时使用”，gstack 的 `/investigate` 也是系统化调试。三个都声称自己负责 debug，模型每次只能挑一个，挑哪个取决于你的措辞和当时的上下文。
+
+两套框架的设计也不一样。superpowers 会在会话开始时用 SessionStart hook 注入一段引导，要求“哪怕只有 1% 的可能适用，也必须调用 skill”。Matt 的 27 个 skill 里有 16 个本来就只能手动调用（比如 `to-spec`、`grill-me`、`grill-with-docs`），会去抢触发的是 `diagnosing-bugs`、`tdd`、`code-review` 这类允许模型自动调用的（截至 2026-10，v1.3.1）。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**定一个主引擎负责自动触发**，其余框架降为只能手动调用。我现在的主引擎是 Matt Pocock skills（试用中）。<Evidence kind="trial" />
+
+</Step>
+<Step>
+
+**推荐：按项目只启用一套**。在项目的 `.claude/settings.json`（团队共享）或 `.claude/settings.local.json`（只对你生效）里，用 `enabledPlugins` 把另一套设为 `false`：
+
+```json
+{
+  "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false
+  }
+}
+```
+
+插件整个关掉，它的 skill 和 hook 都不会再加载。
+
+</Step>
+<Step>
+
+**想保留手动调用、只禁止模型自动触发**：在 `permissions.deny` 里按插件名拦住 Skill 工具。模型调不了，你手动输入 `/superpowers:brainstorming` 这类命令仍然可用：
+
+```json
+{
+  "permissions": {
+    "deny": ["Skill(superpowers:*)"]
+  }
+}
+```
+
+注意这条规则只拦 Skill 调用，superpowers 的 SessionStart hook 照常运行、照常注入引导。想彻底安静，用上一步的做法。
+
+</Step>
+<Step>
+
+**`skillOverrides` 只管普通 skill**。它对插件里的 skill 无效，只作用于放在 `~/.claude/skills/` 或项目 `.claude/skills/` 下的 skill。比如 gstack 装在 `~/.claude/skills/` 下，设成 `user-invocable-only` 后模型看不到它，你仍然可以手动敲 `/investigate`：
+
+```json
+{
+  "skillOverrides": {
+    "investigate": "user-invocable-only",
+    "review": "user-invocable-only"
+  }
+}
+```
+
+</Step>
+<Step>
+
+**写进 CLAUDE.md 并验证**。写明“本项目的流程引擎是哪一套、实质改动先走哪个命令”。改完开一个新会话，说一句“帮我 debug”，看接手的是不是你指定的那个 skill。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [从 superpowers 迁到 Matt](/docs/workflow/migrate)
+- [superpowers 与 Matt：完整对比](/docs/workflow/superpowers-vs-matt)
+- [流程引擎、流水线与专项工具](/docs/workflow)
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)

@@ -1,0 +1,144 @@
+---
+title: 小工具：30 分钟起步
+description: 一个人、一个仓库、没有长期用户：建仓、一页 CLAUDE.md、最小护栏、先出计划再动手，其余先不做
+evidence: lived
+tier: [tool]
+stage: day0
+updated: 2026-10-16
+---
+
+一个人、一个仓库、还没有人依赖它，就是小工具。小工具只需要四样东西：**一个 git 仓库、一页 CLAUDE.md、最小护栏、先出计划再动手的习惯**。spec、ADR、多模型审查、发版清单都先不用，等出现真实用户再补。30 分钟足够起步。
+
+## 什么算小工具
+
+- 脚本、命令行工具、个人自动化
+- 一个静态页面、一份报告、一个落地页
+- 周末项目、一次性原型、验证想法的 demo
+
+判断标准只有一个：**有没有人依赖它**。坏了只影响你自己，就是小工具。
+
+## 30 分钟起步
+
+30 分钟从下面这些都准备好之后开始算：
+
+- 装好了 bun、git、Claude Code 和 GitHub CLI（`gh`）
+- Claude Code 已经登录，能正常开会话
+- `gh auth status` 显示已登录 GitHub
+
+<Steps>
+<Step>
+
+### 建仓库（5 分钟）
+
+```bash
+mkdir my-tool && cd my-tool
+git init
+bun init --yes
+printf '.env*\n!.env.example\n' >> .gitignore
+```
+
+`bun init` 生成 `package.json`、`tsconfig.json` 这些基础文件。最后一行把所有 `.env` 开头的文件加进 `.gitignore`，只保留 `.env.example` 当示例：密钥从第一天起就不进仓库。
+
+</Step>
+<Step>
+
+### 写一页 CLAUDE.md（10 分钟）
+
+在仓库里打开 Claude Code，运行 `/init` 生成初稿，再删到一页以内。小工具的 CLAUDE.md 二三十行就够：
+
+```markdown
+# my-tool
+
+把 CSV 账单按月汇总成 Markdown 报告的命令行工具。
+
+## 命令
+- 运行：`bun run src/index.ts <文件>`
+- 测试：`bun test`（全部通过时显示 0 fail）
+
+## 约定
+- TypeScript strict；引入新依赖前先问我
+- 密钥只从环境变量读，不写进代码
+
+## 禁区
+- 不要改 git 历史：reset、rebase、force push、amend 都由我来做
+```
+
+只写每次会话都要知道的事。CLAUDE.md 对 Claude 来说是上下文，不是强制配置，真正要拦住的操作交给下一步的权限规则。
+
+</Step>
+<Step>
+
+### 配最小护栏（5 分钟）
+
+把五条 deny 规则写进 `~/.claude/settings.json`，拦住删根目录、强推 main 这类最致命的误操作。规则和三个配套习惯见[小工具的最小护栏](/docs/tool/guardrails)。
+
+</Step>
+<Step>
+
+### 第一个任务用 Plan mode（10 分钟）
+
+按 `Shift+Tab` 在几种权限模式之间循环切换，状态栏出现 `plan mode on` 就进入了 Plan mode（也可以直接在提示前面加 `/plan`）。然后描述要做的事：
+
+```text
+读一下这个仓库，给我一个实现计划：支持传入多个 CSV 文件，按月份合并后输出一张表。先不要改代码。
+```
+
+Plan mode 下 Claude 只读代码、出计划，不改文件。你看完计划，觉得对就批准，它才开始动手；不对就直接说哪里不对，让它重写计划。
+
+小工具最大的浪费，是 agent 很努力地做了一个你不想要的东西。Plan mode 让这种偏差在几分钟内暴露，改计划比改代码便宜得多。注意：用 bypass 权限模式启动时，Plan mode 不再拦截修改，原因见[开发：先出计划，再写代码](/docs/product/build)。
+
+</Step>
+<Step>
+
+### 小步提交，推到私有仓库
+
+```bash
+git add -A && git commit -m "init"
+gh repo create my-tool --private --source=. --push
+```
+
+之后每完成一步就提交一次。出了问题能回到上一个干净的点，这比任何护栏都管用。
+
+</Step>
+</Steps>
+
+装了[本手册插件](/docs/reference/plugin)的话，`/ainative:new-project` 会按档位把这些步骤串起来跑一遍，每个写操作先问你。<Evidence kind="trial" />
+
+## 可以先不做的
+
+| 先不做 | 什么时候补 |
+|---|---|
+| spec、plan 文档 | 改动开始影响别人，或者一个会话做不完 |
+| 异构模型审查 | 有了真实用户，或者涉及钱、数据、权限 |
+| 发版清单、上线监控 | 有人依赖它按时可用 |
+| 一大堆插件 | 先别装：每个启用的插件都在每个会话里占上下文 |
+
+## 亲历：这本手册就是从小工具升上来的
+
+这本手册的第一版，是我桌面上的一个单页 HTML：按六个阶段列出命令和检查清单，自己建新项目时照着勾。那时它是典型的小工具：只有我一个读者，坏了也不影响任何人，所以没有 spec、没有审查，改完就用。
+
+决定公开发布、有了读者之后，它才升到产品档：先用拷问把需求定下来，再补上写作规范、审查和部署流程。现在它的写作规范放在仓库根目录的 `STANDARDS.md`。
+
+## 什么时候升到产品档
+
+出现真实用户就升。几个具体的信号：
+
+- 有人开始依赖它，坏了会有人来找你
+- 你改之前会犹豫“别弄坏了”
+- 它挂上了别人会访问的域名
+- 你连续几周都在往里加功能
+
+升档后照着[产品篇](/docs/product)走。四个升档信号和每一档的必备项见[选档](/docs/tiers)。
+
+## 常见坑
+
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)：起步阶段最容易犯的错，是先装一整套合集
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)：刚配好的护栏，可能被别的工具一次清空
+- [亲眼看到才算完成](/docs/pitfalls/see-it-to-ship)：小工具也一样，测试通过不等于真的能用
+
+## 相关
+
+- [小工具的最小护栏](/docs/tool/guardrails)
+- [小工具上线：静态站部署到 Cloudflare](/docs/tool/ship)
+- [选档：小工具、产品还是组织](/docs/tiers)
+- [启动器](/docs/launcher)：选“小工具”档，照清单勾

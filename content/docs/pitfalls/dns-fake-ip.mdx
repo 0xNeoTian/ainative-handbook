@@ -1,0 +1,64 @@
+---
+title: 本机代理会让 DNS 检查失真
+description: 本机代理的 fake-ip 模式劫持了 DNS 查询，dig 返回的全是假地址，差点误报 DNS 没生效
+type: pitfall
+evidence: lived
+tier: [tool, product]
+stage: ship
+rule: 开着本机代理时别信 dig，用 DoH 或换个网络验证 DNS
+tweet: 刚改完 DNS，我照例 dig 一下，返回的全是 198.18 开头的地址，第一反应是记录还没生效，差点就这么报告了。换 DoH 一查，记录早就生效了：本机代理开着 fake-ip 模式，53 端口的查询全被它截了，连指定公共 DNS 都没用。现在验证 DNS 一律用 DoH。
+updated: 2026-10-17
+basis: 2026-05 工作记录
+---
+
+## 发生了什么
+
+一次部署后改完 DNS 记录，我按习惯用 `dig` 验证，返回的是 198.18 开头的地址，跟我配置的目标完全对不上。第一反应是记录还没生效，差点就这么报告了。
+
+后来换 DoH 一查，记录早就生效了：本机开着代理工具的 fake-ip 模式，DNS 查询被它截下，回给我的是一个假地址。换成 `dig @` 指定公共 DNS 服务器再查，结果一模一样。
+
+## 为什么会这样
+
+fake-ip 是一些本机代理工具常用的 DNS 模式：先给每个域名分配一个保留地址段里的假地址，等程序真正发起连接时，再按域名转发出去，省掉等待真实解析的时间。198.18 开头的地址属于 RFC 2544 留给网络设备基准测试的保留段，公网上不会出现，看到它基本就能断定是 fake-ip。
+
+代理在系统层面接管了 53 端口的流量，所以不管你问哪台 DNS 服务器，查询都出不了本机。`dig` 本身没错，错在它的查询根本没出门。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**先识别**：`dig +short example.com` 返回 198.18 开头的地址，就别再排查 DNS 记录了，问题在本机。
+
+</Step>
+<Step>
+
+**用 DoH（DNS over HTTPS）查**。它走 443 端口的 HTTPS，不经过 53 端口，拿到的是真实记录：
+
+```bash
+curl -s 'https://dns.google/resolve?name=example.com&type=A' | jq -r '.Answer[].data'
+curl -s -H 'accept: application/dns-json' \
+  'https://cloudflare-dns.com/dns-query?name=example.com&type=CNAME'
+```
+
+查 CNAME 往往比查 A 记录更能看出域名指向了哪个平台。
+
+</Step>
+<Step>
+
+**需要完整的 `dig` 输出时**，临时关掉代理，或者换个网络（比如手机热点）再查。也可以把你常要验证的域名加进代理工具的 fake-ip 排除名单，让它们走真实解析。
+
+</Step>
+<Step>
+
+**让 agent 也知道**。在 CLAUDE.md 写一句“本机开着 fake-ip 代理，验证 DNS 用 DoH，不要用 dig”，免得它根据假地址得出“部署失败”的结论，再自作主张去改配置。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [一个域名只挂一个平台](/docs/pitfalls/one-domain-one-platform)
+- [网络报错先查远端](/docs/pitfalls/verify-remote-first)
+- [小工具上线：静态站部署到 Cloudflare](/docs/tool/ship)
+- [选平台：Vercel 还是 Cloudflare](/docs/product/platform)

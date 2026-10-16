@@ -1,0 +1,171 @@
+---
+title: 护栏体检：防止静默失效
+description: 护栏会被工具覆盖、被上游合并冲掉，所以要定期检查它们还在、还管用
+evidence: trial
+tier: [tool, product, org]
+stage: cross
+updated: 2026-10-17
+basis: 2026-10 工作记录
+---
+
+护栏失效时不会报错，只会悄悄消失。所以要像体检一样定期检查：**会话开始时自动跑一个脚本**，确认关键的 deny 规则还在、备份 hook 真的会备份；**上游会改的共享文件，在 CI 里用行为断言守住**；切换配置、大合并之后，再做一次全面体检。这套做法是我在 2026 年 10 月那次排查之后定下的，正在落地，所以整页标 🧪。
+
+## 为什么会失效：三条路径
+
+<Evidence kind="lived" /> 下面三条，我是在同一次排查里一起发现的：
+
+1. **被工具覆盖。** 用一个模型供应商切换工具从第三方模型切回官方时，它把 `~/.claude/settings.json` 整份重写，权限规则、hook、插件启用状态全部丢失。表面症状只是“所有插件都关了”
+2. **被上游合并冲掉。** 在一个 fork 的 Makefile 里加的备份步骤，在一次上游大合并中被覆盖
+3. **文件还在，没有挂载。** hook 脚本好好地躺在磁盘上，但 settings 里没有任何事件引用它。我遇到的这一次，正是第 1 条那次覆盖连带丢的
+
+三条的共同点：没有报错、没有提示，你只会在真正需要它的那一刻，发现它已经不在了。还有一条连带的：hookify 这类插件生成的规则，靠插件本身的 hook 执行，插件被关掉，规则就一起失效。
+
+## 原则：查行为，不查文本
+
+grep 到 `pg_dump` 不代表备份会发生：它可能在注释里、在另一个 target 里，或者失败被 `|| true` 吞掉了。settings 里有一条命令名带 `db-backup` 的 hook，也不代表它会匹配、会备份。所以下面的检查都是**真跑一遍，看结果**：喂一段模拟输入，换上假的 `pg_dump` 和 `psql`，看该发生的有没有发生、不该发生的有没有被拦住。
+
+## 1. 会话开始自动检查
+
+SessionStart hook 的标准输出会被加进 Claude 的上下文。利用这一点：检查脚本在一切正常时什么都不输出，发现问题就打印出来，Claude 会在开始干活之前提醒你。
+
+保存为 `~/.claude/hooks/guardrail-check.sh`，加上执行权限：
+
+```bash
+#!/usr/bin/env bash
+# SessionStart hook：检查关键护栏还在不在、还管不管用。全部正常时什么都不输出。
+# SessionStart 的标准输出会进入 Claude 的上下文，所以发现问题就打印出来，让 Claude 提醒你。
+settings="$HOME/.claude/settings.json"
+problems=()
+
+# 1. 关键 deny 规则还在
+for rule in 'Bash(rm -rf ~)' 'Bash(git push --force origin main *)' 'Bash(git reset --hard origin/main *)'; do
+  jq -e --arg r "$rule" '(.permissions.deny // []) | index($r) != null' "$settings" > /dev/null 2>&1 \
+    || problems+=("deny 规则不见了：$rule")
+done
+
+# 2. 备份 hook 挂着，而且真的会备份：取出 PreToolUse 上挂的命令，喂一段模拟输入。
+#    假的 pg_dump 只记录自己被调用过，然后故意失败，所以不会产生真实备份
+hook_cmd="$(jq -r '[.hooks.PreToolUse[]?.hooks[]?.command | strings | select(test("db-backup"))][0] // empty' "$settings" 2>/dev/null)"
+if [ -z "$hook_cmd" ]; then
+  problems+=("数据库备份 hook 没有挂载到 PreToolUse")
+else
+  shim="$(mktemp -d)"
+  printf '#!/bin/sh\ntouch "%s/called"\nexit 1\n' "$shim" > "$shim/pg_dump"
+  chmod +x "$shim/pg_dump"
+  printf '%s' '{"cwd":"/tmp/guardrail-check","tool_input":{"command":"psql -c \"DROP TABLE t\""}}' \
+    | PATH="$shim:$PATH" DATABASE_URL="postgresql://guardrail-check/fake" bash -c "$hook_cmd" > /dev/null 2>&1
+  rc=$?
+  [ -e "$shim/called" ] || problems+=("备份 hook 收到 DROP TABLE 却没有调用 pg_dump")
+  [ "$rc" -eq 0 ] || problems+=("备份 hook 的退出码是 $rc，可能会拦住正常命令")
+  rm -rf "$shim"
+fi
+
+# 3. hookify 还启用着（不用 hookify 就删掉这一项）
+jq -e '.enabledPlugins["hookify@claude-plugins-official"] == true' "$settings" > /dev/null 2>&1 \
+  || problems+=("hookify 插件没有启用，它的规则全部不生效")
+
+if [ ${#problems[@]} -gt 0 ]; then
+  echo "【护栏体检】发现问题，开始工作前请先告诉用户："
+  printf -- '- %s\n' "${problems[@]}"
+fi
+exit 0
+```
+
+第 2 项是行为检查：它把 settings 里真正挂着的那条命令跑一遍，喂给它一条 `DROP TABLE`，看它有没有去调用 `pg_dump`、退出码是不是 0。脚本被删、正则写坏、hook 会误拦正常命令，都会在这里暴露出来。按你自己的情况，改 deny 列表和插件名；不用 hookify 的话，删掉第 3 项。
+
+**关键一步：体检 hook 不要和被检查的东西放在同一个文件里。** 如果它挂在 `~/.claude/settings.json`，切换工具整份重写这个文件时，体检会和规则一起消失。把它挂在托管设置里（工具改不到），或者挂在各项目的 `.claude/settings.json` 里（进了 git，被改动能从 diff 里看出来）：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$HOME\"/.claude/hooks/guardrail-check.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+托管设置的路径和写法见[权限规则](/docs/guardrails/permissions)。
+
+## 2. 在 CI 里做行为断言
+
+fork 里你改过、上游也会改的文件（Makefile、部署脚本、CI 配置），在 CI 里加一步行为断言。以[三层护栏](/docs/guardrails)里的 `db-reset` 为例：用假的 `pg_dump` 控制备份成败，用假的 `psql` 记录 reset 有没有真的执行。保存为 `scripts/check-guardrails.sh`：
+
+```bash
+#!/usr/bin/env bash
+# CI 行为断言：备份成功时 db-reset 照常执行；备份失败时必须停下，不能继续 reset。
+# 用假的 pg_dump 控制备份成败，用假的 psql 记录 reset 有没有真的执行。
+set -uo pipefail
+shim="$(mktemp -d)"
+log="$shim/psql-calls.log"
+printf '#!/bin/sh\necho "psql $*" >> "%s"\n' "$log" > "$shim/psql"
+chmod +x "$shim/psql"
+
+run_reset() {  # $1：假 pg_dump 的退出码
+  printf '#!/bin/sh\nexit %s\n' "$1" > "$shim/pg_dump"
+  chmod +x "$shim/pg_dump"
+  : > "$log"
+  PATH="$shim:$PATH" HOME="$shim" DATABASE_URL="postgresql://ci/fake" make db-reset > /dev/null 2>&1
+}
+
+run_reset 0 && [ -s "$log" ] \
+  || { echo "::error::对照组失败：备份成功时 db-reset 没有走到 reset，目标可能被删了"; exit 1; }
+if run_reset 1 || [ -s "$log" ]; then
+  echo "::error::备份失败时 db-reset 没有停下"; exit 1
+fi
+echo "护栏断言通过：备份失败时 db-reset 会停下"
+```
+
+脚本里有两组：对照组确认 `db-reset` 目标还在、能走到 reset，否则“备份失败时没执行”可能只是因为目标被删了；实验组确认备份失败时 reset 一步都没走。你的 reset 实际调用的如果不是 `psql`（比如 supabase、prisma、docker），把假命令换成它。
+
+然后在 GitHub Actions 里加一步，顺带确认 ask 规则还在：
+
+```yaml
+- name: 护栏断言
+  run: |
+    bash scripts/check-guardrails.sh
+    jq -e '.permissions.ask | index("Bash(make db-reset *)") != null' .claude/settings.json > /dev/null \
+      || { echo "::error::.claude/settings.json 里的 ask 规则不见了"; exit 1; }
+```
+
+下一次上游合并冲掉你的改动时，PR 会直接变红，而不是半年后才被发现。手册和复盘里写下的检查命令，都应该这样变成 CI。
+
+## 3. 全面体检：/ainative:doctor
+
+本手册的插件带了一个只读的体检命令 `/ainative:doctor`：检查插件和 skill 是否冗余或互相抢触发、权限规则和 hook 是否还在、配置有没有被切换工具覆盖。适合在这些时候跑：
+
+- 换电脑或重装之后
+- 切换模型供应商之后
+- 上游大合并之后
+- 每个月一次
+
+安装和其他功能见[本手册的 Claude Code 插件](/docs/reference/plugin)。
+
+## 不装任何东西，也能看一眼
+
+| 命令 | 看什么 |
+|---|---|
+| `/permissions` | 所有权限规则，以及每条来自哪个文件 |
+| `/hooks` | 按事件列出所有已挂载的 hook |
+| `/status` | `Setting sources` 一行：托管设置有没有生效 |
+| `claude doctor` | 安装是否健康、哪些设置因为写错被丢弃 |
+| `claude plugin list` | 插件是否还处于启用状态 |
+
+这几条只能告诉你“配置还在”，不能告诉你“还管用”。管不管用，要靠上面两种行为检查。
+
+## 常见坑
+
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite)
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)
+
+## 相关
+
+- [三层护栏](/docs/guardrails)
+- [用 hook 兜底](/docs/guardrails/hooks)
+- [让 ops 和项目一起进化](/docs/org/evolve)
+- [本手册的 Claude Code 插件](/docs/reference/plugin)

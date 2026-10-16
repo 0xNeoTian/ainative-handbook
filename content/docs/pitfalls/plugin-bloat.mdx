@@ -1,0 +1,91 @@
+---
+title: 插件不是越多越好
+description: 装了 39 个插件、72 个 subagent，最近 30 天被调用过的 skill 只有二十个左右：按调用数据和常驻成本做减法
+type: pitfall
+evidence: lived
+tier: [tool, product]
+stage: day0
+rule: 按真实调用数据定期精简插件和 subagent，用不到的就停用
+tweet: 我一度装了 39 个插件、72 个 subagent，觉得越全越好。后来把最近 30 天的会话记录翻出来统计（默认只留这么久），被调用过的 skill 只有二十个左右，涉及的插件寥寥几个。剩下的每个会话都在吃上下文，还可能在后台抢触发。按数据砍到 16 个插件、19 个 subagent。
+updated: 2026-10-17
+basis: 2026-10 工作记录
+---
+
+## 发生了什么
+
+这大半年，我看到好用的插件就装。到 2026 年 10 月做工具链大扫除时，手上有 39 个插件、80 多个 skill、72 个 subagent。我统计了最近 30 天的真实调用（会话记录默认只保留这么久）：被调用过的 skill 只有二十个左右，涉及的插件只有寥寥几个。
+
+剩下的并不是“放着不用也无害”：它们的描述每个会话都要占上下文，还可能在后台和常用的 skill 抢触发。按数据精简之后，剩 16 个插件、19 个 subagent。
+
+## 为什么会这样
+
+装插件几乎零成本，卸载却要先确认“真的用不到”，于是只增不减。
+
+每个 skill 的名字和描述默认都会进入 Claude 看到的技能列表。插件越多，描述相近的 skill 越容易互相抢；列表超出预算（约为上下文窗口的 1%）时，Claude Code 还会丢掉一部分描述，先丢调用最少的，Claude 就少了匹配你请求的关键词。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**先看成本**。`/skill-doctor` 列出每个 skill 的上下文开销和使用频率，标出从没用过的，也列出最近没用的插件；单个插件看常驻成本：
+
+```bash
+claude plugin details mattpocock-skills@claude-plugins-official
+```
+
+它会列出组件清单和“每个会话常驻多少 token”（截至 2026-10，这个插件约 1.6k）。
+
+</Step>
+<Step>
+
+**再看调用**。这段脚本只统计名字、不读内容，同时算上模型自动触发的 skill 和你手动敲的 `/` 命令，只靠前者会低估那些只能手动调用的 skill：
+
+```python
+import collections, glob, json, os, re
+c, tag = collections.Counter(), re.compile(r'<command-name>/?([^<]+)</command-name>')
+for f in glob.glob(os.path.expanduser('~/.claude/projects/*/*.jsonl')):
+    for line in open(f, encoding='utf-8', errors='ignore'):
+        if '"Skill"' not in line and 'command-name' not in line:
+            continue
+        try:
+            content = (json.loads(line).get('message') or {}).get('content')
+        except ValueError:
+            continue
+        if isinstance(content, str):
+            c.update('/' + n for n in tag.findall(content))
+        for b in content if isinstance(content, list) else []:
+            if isinstance(b, dict) and b.get('name') == 'Skill':
+                c[(b.get('input') or {}).get('skill')] += 1
+for name, n in c.most_common():
+    print(n, name)
+```
+
+subagent 同理，统计 `Agent` 工具调用里的 `subagent_type`。注意会话记录默认只保留 30 天（`cleanupPeriodDays`），想看 90 天要提前调大。
+
+</Step>
+<Step>
+
+**做减法**。插件先停用、观察两周再卸载：
+
+```bash
+claude plugin disable <name>@<marketplace>
+claude plugin uninstall <name>@<marketplace>
+```
+
+个人 skill 用 `skillOverrides` 设为 `off`，或设为 `name-only` 只留名字；用不到的 subagent 定义文件移出 `~/.claude/agents/`。
+
+</Step>
+<Step>
+
+**定期复查**。每个季度跑一次，或直接用本手册插件的 `/ainative:doctor`。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)
+- [工具分工总表](/docs/reference/toolchain)
+- [流程引擎、流水线与专项工具](/docs/workflow)
+- [本手册的 Claude Code 插件](/docs/reference/plugin)

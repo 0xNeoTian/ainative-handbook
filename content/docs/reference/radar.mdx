@@ -1,0 +1,89 @@
+---
+title: 工具与方法雷达
+description: 评估过的工具和方法分四档：采用、试用、评估、暂缓，每一项都写明结论、理由和可信度
+evidence: lived
+tier: [tool, product, org]
+updated: 2026-10-17
+---
+
+这一页把我评估过的工具和方法按四档列出来：**采用、试用、评估、暂缓**（借用 Thoughtworks 技术雷达的分法）。重点不在列得全，而在每一项都写清楚**我的结论和理由**，包括决定不用的那些。最后一次整体评估：2026-10-16。
+
+## 四档的含义
+
+| 档 | 含义 | 对应可信度 |
+|---|---|---|
+| **采用** | 在真实项目里长期使用，推荐默认就这么做 | ✅ 亲历 |
+| **试用** | 正在真实项目里试，有明确的评估方法，结论可能会变 | 🧪 试用中 |
+| **评估** | 值得了解，我还没有在真实项目里用过 | 📚 业界做法 |
+| **暂缓** | 评估后决定现在不用，或者明确不建议这么做 | 写明原因 |
+
+一项要从"试用"升到"采用"，需要跑满一个评估周期并有数据。例如流程引擎的 30 天对比，记录返工轮数、审查发现数和流程被跳过的次数，见[迁移方法](/docs/workflow/migrate)。
+
+## 采用
+
+| 名称 | 类别 | 结论 | 详见 |
+|---|---|---|---|
+| Plan mode + 内置 `/code-review` | 工具 | 实质改动先出计划；每次合并前跑一遍内置审查 | [开发](/docs/product/build)、[发布](/docs/product/ship) |
+| 异构模型二审（Codex CLI 等） | 方法 | 重大改动交给另一个模型家族独立审，人最后拍板。这本手册上线前，Codex 在内容和插件的四轮审查里一共抓出 29 个高优先级问题（P1：内容 16 个、插件 13 个），全部修复后才发布 | [自己审自己等于没审](/docs/pitfalls/cross-model-review) |
+| gstack 的 `/codex` | 工具 | 用它调 Codex CLI 做异构二审，是我用得最多的 gstack 命令；`/cso`、`/browse` 也用过 | [gstack](/docs/workflow/gstack) |
+| 三层护栏：权限规则 + hook 兜底 + 应用层备份 | 方法 | deny 拦绝对不行的，ask 拦必须确认的，hook 只做兜底 | [三层护栏](/docs/guardrails) |
+| 复盘 + "Harness 反馈" | 方法 | 每次事故写复盘，把能机械化的教训落成规则和 hook | [运维](/docs/product/maintain)、[复盘模板](/docs/templates/retro) |
+| AGENTS.md（Claude Code 用 `@AGENTS.md` 导入） | 约定 | 项目规则写一份，多种 AI 工具都能读到 | [第 0 步](/docs/product/day-0) |
+| context7 | 工具 | 查最新的库文档，不让模型凭记忆写过时的 API | [工具分工总表](/docs/reference/toolchain) |
+| typescript-lsp、gopls-lsp | 工具 | 代码智能，装上即用 | [工具分工总表](/docs/reference/toolchain) |
+| Cloudflare 官方 MCP | 平台 | 用 OAuth 授权改 DNS 和 Zone 设置，不必手工建 token | [选平台](/docs/product/platform) |
+| Vercel 跑应用、Cloudflare 做底座 | 平台 | Next.js 全功能产品放 Vercel；DNS、R2、边缘 API、静态站放 Cloudflare | [选平台](/docs/product/platform) |
+
+## 试用
+
+| 名称 | 类别 | 结论 | 怎么评估 |
+|---|---|---|---|
+| Matt Pocock skills（当前主流程引擎） | 工具 | 2026-10 起替换 superpowers，看"先对齐、再沉淀"是否更适合我 | 30 天对比：返工轮数、审查发现数、流程被跳过的次数 |
+| hookify | 工具 | 用一句话把"别做 X"变成 hook | 看规则的误拦和漏拦 |
+| session-report | 工具 | 看 token、缓存、subagent 开销 | 每周看一次，找最费钱的提示词 |
+| ui-contract | 工具 | 管"新功能放页面哪个区域"的结构约定 | 在一个有界面的产品里跑满一个迭代 |
+| `/goal` 目标驱动的长任务 | 方法 | 给一个机器可以验证的成功标准，让它跑到达标 | 记录达标率和中途偏航的次数 |
+| 本手册插件 `ainative` | 工具 | 体检、配置、推荐、新项目、查坑、提炼复盘 | 插件评测用例的通过率 |
+| 站内插件市场 + 不可变安装包 | 方法 | 不开源仓库也能分发插件；每个版本的安装包永不覆盖 | 安装失败率 |
+| llms.txt | 约定 | 让其他 AI 工具直接读全文 | AI 搜索里的引用情况 |
+
+## 评估
+
+| 名称 | 类别 | 为什么值得看 | 打算怎么试 |
+|---|---|---|---|
+| gstack 其余上线命令（`/review`、`/investigate`、`/qa`、`/ship`） | 工具 | 按官方说明覆盖合并前审查、排查、真实浏览器 QA、发版，我还没在记录里用过 | 下一次发版时用 `/ship` 和 `/qa` 走一遍，记录结果 |
+| claude-code-setup（官方插件） | 工具 | 只读扫描新仓库，推荐该配的 hook、skill、MCP | 下一个新项目第 0 步跑一次，和 `/ainative:doctor` 的结论对照 |
+| Claude GitHub Action（`/install-github-app`） | 工具 | 每个 PR 自动 AI 审查，规则写在 REVIEW.md | 在一个开源仓库上先开 |
+| security-guidance（官方插件） | 工具 | 编辑时实时提示不安全写法，成本低 | 在一个会动鉴权或支付的项目里开一个月 |
+| Supabase 插件（按项目启用） | 工具 | 直接读表结构、生成迁移 | 只在用 Supabase 的项目里开，凭据限开发库 |
+| Sentry 插件 | 工具 | 把线上报错直接接进"事故 → 新 intent"的回路 | 等有线上产品需要时再接 |
+| `/schedule` 定时园丁 | 方法 | 每周自动查过期文档、失效链接、护栏是否还在 | 先给这本手册自己跑 |
+| EARS 验收标准 | 约定 | "当……时，系统应……"，每条都能直接写成测试 | 已放进 [spec 模板](/docs/templates/spec)，等真实项目验证 |
+| AI 功能先写 eval（`claude plugin eval`） | 方法 | AI 功能用普通测试兜不住 | 先给本手册插件建评测用例 |
+| 先挑低风险改动、再逐步放权 | 方法 | 按质量数据决定 agent 能做多少事 | 结合权限规则分档试 |
+| frontend-design（官方插件） | 工具 | 管视觉品质，和 ui-contract 不冲突 | 做落地页时开 |
+| Claude Code OpenTelemetry 用量监控 | 平台 | 团队规模上来后看各成员、各项目的开销 | 团队超过 5 人再说 |
+
+## 暂缓
+
+| 名称 | 类别 | 原因 |
+|---|---|---|
+| superpowers | 工具 | 用了大半年（约 7 个月），好用 <Evidence kind="lived" />。现在暂缓是因为在试 Matt，两套同时自动触发会互相抢；30 天后按数据决定留哪个 |
+| 同时开两套流程框架 | 方法 | 同一句话被不同框架接走，流程前后不一致。见[同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine) |
+| 和内置功能重复的插件（如 code-review 类） | 工具 | 内置已有 `/code-review`、`/simplify`、`/security-review`，再装只会多占上下文、多一个抢触发的对象 |
+| 一次装一整个合集 | 方法 | 我装过 39 个插件、72 个 subagent，最近 30 天里被调用过的 skill 只有二十个左右。见[插件不是越多越好](/docs/pitfalls/plugin-bloat) |
+| GitHub Spec Kit、BMAD | 工具 | spec 驱动开发的两个主流框架；它们的核心思想已经被"intent → spec → plan"加 Matt 的组合覆盖，再装就是第三套流程 |
+| Addy Osmani 的 agent-skills | 工具 | 跨工具兼容性好，但和 Matt 高度重叠 |
+| Every 的 compound-engineering 插件、GSD | 工具 | 理念很好（复利工程已经吸收进本手册），但插件本身又是一套完整流程，和现有组合冲突 |
+| 子 agent 为省钱降级到小模型 | 方法 | 有工程不变量的任务，累积下来质量兜不住。见[子 agent 别为省钱降级](/docs/pitfalls/subagent-strongest-model) |
+| 不加防护地使用供应商切换工具 | 方法 | 切换可能整份重写设置文件。要用就把护栏放进托管设置，切换后检查。见[切换工具会整份覆盖设置](/docs/pitfalls/config-overwrite) |
+
+## 这一页怎么更新
+
+每次有工具换档，都会在[更新日志](/docs/reference/changelog)里记一笔，写明依据。看到你觉得放错档的，欢迎在 GitHub 上提 issue，附上你的使用数据。
+
+## 相关
+
+- [工具分工总表](/docs/reference/toolchain)：每件事现在由谁负责
+- [superpowers 与 Matt：完整对比](/docs/workflow/superpowers-vs-matt)
+- [背后的理念](/docs/reference/ideas)

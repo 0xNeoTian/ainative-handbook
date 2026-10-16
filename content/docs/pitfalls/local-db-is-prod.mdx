@@ -1,0 +1,93 @@
+---
+title: 本地数据库也要按生产对待
+description: 本地库里攒着别处没有的配置和演示数据时，它就是生产。防止一条破坏性命令把它们清空且无从恢复
+type: pitfall
+evidence: lived
+tier: [product]
+stage: build
+rule: 任何破坏性数据库操作之前先 dump，备份失败就不执行
+tweet: 一条破坏性的数据库命令，清空了我本地库里几个演示工作区，连同里面的 agent 配置，没有任何备份。那些都是一点点手工攒的，别处没有第二份，最后靠翻会话记录花了一天半才重建。“本地”不等于“可以重来”：库里有别处没有的数据，它就是生产。现在任何破坏性操作前先 dump，备份失败就不执行。
+updated: 2026-10-17
+basis: 2026-05 复盘
+---
+
+## 发生了什么
+
+一条破坏性的数据库命令把本地库清空了。里面有几个演示用的工作区，连同里面的 agent 配置、任务和对话，全部丢失，没有任何备份。
+
+这些不是测试数据。演示工作区和里面的 agent 配置，是在界面上一点点手工搭起来、拿去给别人看的。它们只存在于那个“本地”库里：不是 seed 脚本生成的，也从没导出过。最后是翻会话记录一点点考古，花了一天半才重建出来。
+
+## 为什么会这样
+
+“本地”两个字让人放松警惕，人是这样，agent 也是。开发工具链默认本地库随时可以重来：reset、`docker compose down -v`、重跑迁移，都是家常便饭。可本地库里装的东西早就变了，手工攒下的配置和演示数据，在别处找不到第二份。
+
+一条命令危不危险，要看数据有没有第二份、丢了要多久才补得回来，而不是看它跑在哪个环境。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**reset 目标先备份，备份失败就退出**。make 遇到失败的命令会直接停下，走不到后面的 reset。“备份失败就不执行”靠的就是这一层：
+
+```makefile
+BACKUP_DIR ?= $(HOME)/db-backups
+
+db-reset:
+	@test -n "$(DATABASE_URL)" || { echo "DATABASE_URL 未设置"; exit 1; }
+	@mkdir -p $(BACKUP_DIR)
+	@pg_dump -Fc -d "$(DATABASE_URL)" -f $(BACKUP_DIR)/pre-reset-$$(date +%Y%m%d-%H%M%S).dump
+	./scripts/reset-db.sh
+```
+
+行首的 `@` 让 make 不回显命令。没有它，展开后的连接串会原样打进终端、CI 日志和 agent 的对话。密码也不要放进命令参数：写进 `~/.pgpass`（格式 `主机:端口:库名:用户:密码`，前四个字段可以写 `*`；权限必须是 600，否则会被忽略），连接串里只留用户、主机和库名；也可以用 `PGPASSFILE` 环境变量指向一个不进 git 的密码文件。
+
+</Step>
+<Step>
+
+**破坏性命令设成 ask**，agent 执行前必须你点头。写进项目的 `.claude/settings.json`，这个文件进 git，被改动时能在 diff 里看到：
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "Bash(make db-reset *)",
+      "Bash(supabase db reset *)",
+      "Bash(docker compose down -v *)",
+      "Bash(docker volume rm *)"
+    ]
+  }
+}
+```
+
+</Step>
+<Step>
+
+**再加一层尽力而为的兜底**：PreToolUse hook 匹配到这些命令时先 `pg_dump` 一份，永远 `exit 0`，备份失败也照样放行。它替代不了第一步的 reset 脚本。写法见[用 hook 兜底](/docs/guardrails/hooks)。
+
+</Step>
+<Step>
+
+**定期演练恢复**。`pg_restore --list` 只能列出归档里有什么，证明不了能恢复。真正的验证是找一个临时库（别用原来的库）实际恢复一次，再抽查关键数据：
+
+```bash
+createdb restore_check
+pg_restore --no-owner -d restore_check <备份文件>.dump     # 自定义格式（-Fc）用 pg_restore
+# 纯 SQL 格式的备份用 psql 恢复：psql -d restore_check -f <备份文件>.sql
+psql -d restore_check -c 'select count(*) from <关键表>'   # 抽查关键数据
+dropdb restore_check
+```
+
+能脚本化的资产，比如演示数据、agent 配置，顺手导出成 seed 脚本放进 git。
+
+</Step>
+</Steps>
+
+后来我把这三层都加上了，半年后才发现它们已经悄悄失效，见[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)。
+
+## 相关
+
+- [三层护栏](/docs/guardrails)
+- [权限规则：deny、ask、allow](/docs/guardrails/permissions)
+- [用 hook 兜底](/docs/guardrails/hooks)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)

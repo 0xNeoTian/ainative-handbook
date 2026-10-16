@@ -1,0 +1,119 @@
+---
+title: 设计：从 intent 到 spec
+description: 一次会话里把 intent 拷问成可以开工的 spec，顺手留下术语表和 ADR；spec 以仓库里的文件为准
+evidence: lived
+tier: [product]
+stage: design
+updated: 2026-10-17
+---
+
+设计阶段把 intent 变成一份可以直接开工的 spec：**用户故事、实现决策、测试决策、不做的范围**，接在同一个文件的 intent 下面。讨论中定下的术语写进术语表，不好回头的决定写成 ADR。spec 以仓库里的文件为准，Issue 里只贴链接。
+
+| 产物 | 人工关卡 | 衡量指标 |
+|---|---|---|
+| spec 文件 intent 之后的部分、`GLOSSARY.md`、`docs/adr/` | 你以产品负责人的身份签字：spec 对得上 intent，待定问题都有答案或明确延后 | 从 intent 提交到 spec 定稿的时间；开工后 spec 又被改了几次 |
+
+“先写 spec 再动手”这套做法我用了大半年 <Evidence kind="lived" />，2026-10 起具体命令换成了 Matt Pocock skills <Evidence kind="trial" />。
+
+## 为什么
+
+Playbook 的做法是把 spec 和 intent 一起提交，一个记录“要了什么”，一个记录“定了什么”。产品负责人审 spec 但不亲自写，原文的说法是：这个决定总是由一个人来做。它衡量这一招的滞后指标，是开工之后 spec 还被改了几次：改得越多，说明需求在开发中途返工。
+
+没有 spec 就开工，事后没法审计、没法交接，也没法让另一个模型审“做出来的是不是要的”：Matt 的 code-review 有一个维度，专门拿 diff 对照 spec。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+### 边拷问边沉淀：grill-with-docs
+
+```text
+/mattpocock-skills:grill-with-docs 读 docs/specs/2026-10-16_monthly-export.md 的 intent，开始设计
+```
+
+它同时调用 grilling 和 domain-modeling，一边拷问一边做两件事：
+
+- 你用的词和 `GLOSSARY.md` 冲突或者含糊时当场指出，比如“账户”到底指付费的客户还是登录的用户，定下来就立刻写进术语表
+- 只给同时满足三个条件的决定写 ADR：难以回头；没有上下文会让后来的人意外；确实在几个方案之间做了取舍
+
+文件都是用到才建：第一次定下术语时才建 `GLOSSARY.md`，第一份 ADR 才建 `docs/adr/`。术语开始打架、但不需要整轮拷问时，可以单独用 `/mattpocock-skills:domain-modeling`。
+
+</Step>
+<Step>
+
+### 整理成 spec：to-spec
+
+```text
+/mattpocock-skills:to-spec
+```
+
+to-spec 不再提问，只把这次对话整理成 spec：问题、方案、用户故事（越全越好）、实现决策、测试决策、不做的范围、补充说明。动笔前它会先跟你确认在哪一层测试（Matt 称为 seam，越少越好）。它刻意不写具体文件路径和代码片段，因为这些很快就会过时。
+
+它默认把 spec 发到 Issue tracker 并打上 `ready-for-agent` 标签。我的约定是以仓库里的文件为准：spec 写进 `docs/specs/` 那个文件的 intent 下面，Issue 里贴链接。做法是在 setup 生成的 `docs/agents/issue-tracker.md` 里加一句约定，例如“spec 先写入 `docs/specs/YYYY-MM-DD_<slug>.md`，再开 Issue 贴链接”；加完跑一次 to-spec，确认它先写文件再开 Issue。
+
+分支名用同一个 slug，比如 `feature/monthly-export`：后面 Matt 的 code-review 找 spec 时，会在 `docs/` 下按分支名匹配。
+
+</Step>
+<Step>
+
+### 拿不准的地方，先做一次性原型
+
+```text
+/mattpocock-skills:prototype
+```
+
+两种情况用它：
+
+- 这个状态模型或业务逻辑对不对：生成一个单文件 HTML，可以点按钮推着状态机走一遍纸上推不清的情况
+- 这个界面该长什么样：在同一个路由上生成几个差别很大的版本，用 URL 参数切换对比
+
+原型从第一天起就是要扔的：不写测试，不做持久化。验证出来的结论写回 spec，必要时把关键的状态机或类型片段贴进实现决策；原型本身提交到一个不合并的分支留档。Matt 推荐的走法是先用 `/mattpocock-skills:handoff` 把当前讨论交接出去，在新会话里做原型，再把结论交接回来。
+
+</Step>
+<Step>
+
+### UI 项目：先定结构约定
+
+有 UI 的项目，agent 最常见的毛病是把新功能随手塞进某个角落，几轮之后页面就乱了。ui-contract 把“页面分成哪些区域、每个区域放什么”写成约定：`layout.md` 管结构，`design.md` 管视觉，再配上 token 文件、`RegionId` 类型和体检脚本。它是社区开源项目（[github.com/yannikzz/ui-contract](https://github.com/yannikzz/ui-contract)，MIT）。<Evidence kind="trial" />
+
+只装到当前项目：
+
+```bash
+claude plugin marketplace add yannikzz/ui-contract
+claude plugin install ui-contract@yannikzz --scope project
+```
+
+第一行添加它的插件市场，第二行安装。装好后用 `/ui-contract:ui-contract` 定下页面分区和视觉规范；`/ui-contract:ui-contract-enforce` 把允许使用的区域名写成 `RegionId` 类型，写了不存在的区域名，类型检查就会报错；但它发现不了“功能放到了另一个合法区域”，放置是否合规，由体检脚本和评审来判断。
+
+</Step>
+<Step>
+
+### 可选：多视角评审
+
+方案涉及产品方向或架构取舍时，可以跑 gstack 的 `/autoplan`：它依次用 CEO、设计、工程、开发者体验四个视角评审方案，按预设的原则自动做决定，最后汇总给你。只想要其中一个视角，用 `/plan-eng-review` 或 `/plan-ceo-review`。<Evidence kind="industry" />
+
+</Step>
+</Steps>
+
+## 人工关卡：签字之前查四件事
+
+1. spec 和 intent 对得上：intent 里的每一条约束，spec 里都有回应
+2. intent 的待定问题，要么有了答案，要么明确写着延后
+3. “不做的范围”比 intent 里写的更具体
+4. 测试决策写清了在哪一层测、测什么行为
+
+签字的动作就是提交 spec；用了 Issue 的话，再把 Issue 标成可以开工。签完字，开工后再改 spec 就算返工，要在提交信息里写清原因。
+
+## 常见坑
+
+- [“之前是这样的”先查 git](/docs/pitfalls/memory-vs-git)：设计时有人（包括你自己）说“以前是 X”，先查 git 历史，再决定当不当约束
+- [实质改动先留文档再动手](/docs/pitfalls/process-before-code)
+
+## 相关
+
+- [spec 模板](/docs/templates/spec)
+- [ADR 模板](/docs/templates/adr)
+- [superpowers 与 Matt：完整对比](/docs/workflow/superpowers-vs-matt)
+- 上一步：[规划：先写 intent](/docs/product/plan)
+- 下一步：[开发：先出计划，再写代码](/docs/product/build)

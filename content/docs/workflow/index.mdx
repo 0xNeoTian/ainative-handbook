@@ -1,0 +1,55 @@
+---
+title: 流程引擎、流水线与专项工具
+description: 把工具分成三类，各自只让一个负责，避免抢触发
+evidence: lived
+tier: [product]
+stage: cross
+updated: 2026-10-17
+---
+
+把 Claude Code 生态里的插件和 skill 分成三类：**流程引擎**决定“先对齐、再写 spec、再实现、再审查”的顺序；**上线流水线**负责合并和发版前的检查；**专项工具**只解决一个具体问题。每一类只指定一个负责的工具，同一时间只让一套流程引擎自动接管。我现在的组合：流程引擎用 Matt Pocock skills <Evidence kind="trial" />，上线流水线用 gstack 的几条命令，专项工具按需装；用了大半年的 superpowers 已经停用。
+
+## 为什么要分类
+
+每个 skill 都在描述里写着“什么时候该用我”，模型据此自动挑选。几套工具都想管同一件事，结果就是抢触发。调试是最典型的例子：superpowers 的 systematic-debugging、Matt 的 diagnosing-bugs、gstack 的 `/investigate` 都声称自己负责调试，gstack 的说明里甚至写着“用户报错时直接调用它，不要自己调试”。三套同时开着，同一类问题每次走的流程可能都不一样，事后也说不清这次是谁在管（见[同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)）。
+
+另一个代价是上下文。装着的 skill 每轮都要把描述放进上下文，不管用没用上。2026-10 我按最近 30 天的真实调用统计做了一次大扫除：插件从 39 个减到 16 个，subagent 从 72 个减到 19 个（见[插件不是越多越好](/docs/pitfalls/plugin-bloat)）。
+
+## 三类工具怎么分工
+
+| 类别 | 管什么 | 我现在用的 | 自动触发 |
+|---|---|---|---|
+| 流程引擎 | 需求对齐、spec、计划、TDD 实现、调试、审查的顺序 | Matt Pocock skills | 只允许一套 |
+| 上线流水线 | 异构二审、安全审计、真实浏览器 QA、发版 | gstack 的 7 个命令，加上内置的 `/code-review`、`/security-review` | 建议只在手动敲命令时运行 |
+| 专项工具 | 一个具体问题 | hookify（一句话生成 hook，🧪）、[ui-contract](https://github.com/yannikzz/ui-contract)（约定新功能放在页面哪个区域，🧪）、context7（查最新库文档）、session-report（看 token 开销，🧪） | 各管各的，不重叠 |
+
+还有一层是 Claude Code 的内置功能：Plan mode（`Shift+Tab`）、`/code-review`、`/security-review`、`claude --worktree`、`/schedule`。它们不属于哪一类，哪套引擎都替代不了，始终打底。
+
+## 新工具该归到哪一类
+
+拿到一个新插件，先问它想管什么：
+
+- **管“从需求到合并的顺序”**：这是流程引擎。已经有一套了，就只把它当参考，或者按项目切换（见[迁移页](/docs/workflow/migrate)）
+- **管“合并前、上线前的检查”**：这是流水线。先看它和现有命令有没有重叠，重叠的只留一个
+- **只解决一个具体问题**：这是专项工具。装之前用 `claude plugin details <name>@<marketplace>` 看它每个会话要占多少常驻 token
+
+## 我的现状
+
+- **superpowers** <Evidence kind="lived" />：用了大半年（约 7 个月），2026-10 停用。它最大的价值是强制走流程、不准直接上手改；最大的问题是会话一开始就接管，还规定流程类 skill 优先，可能抢在其他 skill 和我的自建 SOP 前面。完整对比见 [superpowers 与 Matt Pocock](/docs/workflow/superpowers-vs-matt)
+- **Matt Pocock skills** <Evidence kind="trial" />：2026-10 起作为主引擎试用。这本手册的需求就是先用 `/mattpocock-skills:grilling` 拷问出来、再动手写的。迁移和评估方法见[迁移页](/docs/workflow/migrate)
+- **gstack** <Evidence kind="lived" />：只用上线流水线相关的几条命令，见 [gstack 页](/docs/workflow/gstack)
+
+## 常见坑
+
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)
+- [实质改动先留文档再动手](/docs/pitfalls/process-before-code)
+
+## 相关
+
+<Cards>
+  <Card title="superpowers 与 Matt：完整对比" href="/docs/workflow/superpowers-vs-matt" description="自动强制 vs 手动调用，怎么选" />
+  <Card title="从 superpowers 迁到 Matt" href="/docs/workflow/migrate" description="映射表、共存配置、30 天评估" />
+  <Card title="gstack：上线流水线怎么用" href="/docs/workflow/gstack" description="7 个上线命令、成本与分工" />
+  <Card title="产品：AI-native 开发六阶段" href="/docs/product" description="每个阶段用哪个工具" />
+</Cards>

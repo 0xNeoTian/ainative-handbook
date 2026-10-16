@@ -1,0 +1,338 @@
+---
+title: 从 superpowers 迁到 Matt
+description: 逐个环节的对应关系、两套共存的配置，以及怎么用数据决定留谁
+evidence: trial
+tier: [product]
+stage: cross
+updated: 2026-10-17
+---
+
+迁移分四步：按映射表换命令；同一个项目只让一套引擎自动触发；用规则、hook 和合并关卡补回“自动强制”；每个任务记一行数据，30 天后决定留谁。注意：**`skillOverrides` 管不到插件里的 skill**，“把另一套设成 `user-invocable-only`”对插件版的 superpowers 和 Matt 都不生效（见第 2 节）。
+
+## 1. 映射表
+
+开始之前，每个仓库跑一次 `/mattpocock-skills:setup-matt-pocock-skills`，配置 Issue 和文档放在哪。
+
+| 环节 | superpowers | Matt Pocock | 说明 |
+|---|---|---|---|
+| 想清楚需求 | brainstorming | grill-me、grill-with-docs | grill-with-docs 边问边更新术语表和 ADR |
+| 写计划 | writing-plans | to-spec；大工程再加 to-tickets、wayfinder | to-spec 产出的是 spec，不是逐文件计划；要计划就用内置 Plan mode 出，存进 `docs/plans/` |
+| 执行 | executing-plans、subagent-driven-development | implement、implement-spec | 配合内置 worktree 和后台 agent |
+| TDD | test-driven-development | tdd | |
+| 调试 | systematic-debugging | diagnosing-bugs | |
+| 审查 | requesting-code-review | code-review | 再加内置 `/code-review` 和异构模型二审 |
+| 完成前验证 | verification-before-completion | 无直接对应 | 用 CLAUDE.md 规则、Stop hook、gstack `/qa` 补 |
+| 收尾 | finishing-a-development-branch | pr | 再加 gstack `/ship` |
+| 写 skill | writing-skills | writing-for-agents | |
+| superpowers 没有的 | — | handoff、domain-modeling、prototype、wayfinder、triage、research | |
+
+Matt 的 skill 都用 `/mattpocock-skills:<name>` 调用，其中 11 个模型可以自动调用，其余 16 个只能手动敲。
+
+## 2. 两套共存：同一个项目只让一套自动触发
+
+<Evidence kind="industry" /> 两套同时自动触发，一句“帮我 debug”可能被任意一套接走（见[同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)）。
+
+<Callout type="warn" title="skillOverrides 管不到插件 skill">
+官方文档写明：插件里的 skill 不受 `skillOverrides` 影响，要在 `/plugin` 里管理（[skills 文档](https://code.claude.com/docs/en/skills#override-skill-visibility-from-settings)）。在 Claude Code 2.1.301 上实测：把 `mattpocock-skills:tdd` 或 `tdd` 设成 `user-invocable-only`，模型照样能看到并调用它；同样的设置对项目里的普通 skill 立即生效。
+</Callout>
+
+可用的办法有三个，按推荐顺序排。
+
+### 方案 A：按项目选引擎（推荐）
+
+用 `enabledPlugins` 在用户级设默认引擎，在个别项目里覆盖；项目级设置优先于用户级（[官方说明](https://code.claude.com/docs/en/settings-reference#enabledplugins)）。这也是我现在的配置：Matt 全局启用，superpowers 装着但停用。
+
+```json title="~/.claude/settings.json"
+{
+  "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false
+  }
+}
+```
+
+想在某个项目继续用 superpowers，就在项目里覆盖（只对自己生效写 `.claude/settings.local.json`，全队一致写 `.claude/settings.json`）：
+
+```json title=".claude/settings.local.json"
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "mattpocock-skills@claude-plugins-official": false
+  }
+}
+```
+
+也可以用命令：`claude plugin enable superpowers@claude-plugins-official --scope local`，再 `claude plugin disable mattpocock-skills@claude-plugins-official --scope local`，改完在会话里运行 `/reload-plugins`。停用插件时，它的 SessionStart hook 也一起停掉，这是方案 A 比其他办法干净的地方。
+
+### 方案 B：同一个项目里留一套只许手动的备用
+
+在 `permissions.deny` 里写 `Skill(<插件>:<skill>)`，或用 `Skill(<插件>:*)` 覆盖整个插件。在 Claude Code 2.1.301 上实测：模型调用会被拦下（报错 “Skill execution blocked by permission rules”），你手动输入 `/<插件>:<skill>` 照常运行。两个副作用：
+
+- 被拒绝的 skill 即使由另一个 skill 转调也会被拦，而 Matt 的 grill-me 本身就是转调 grilling
+- 描述仍在 skill 列表里，常驻成本不变
+
+<Tabs items={['superpowers 为主', 'Matt 为主']}>
+<Tab value="superpowers 为主">
+
+Matt 的 16 个编排类 skill 本来就只能手动调用，只需拦住和 superpowers 重叠的纪律类：
+
+```json title=".claude/settings.json"
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "mattpocock-skills@claude-plugins-official": true
+  },
+  "permissions": {
+    "deny": [
+      "Skill(mattpocock-skills:tdd)",
+      "Skill(mattpocock-skills:diagnosing-bugs)",
+      "Skill(mattpocock-skills:code-review)",
+      "Skill(mattpocock-skills:writing-for-agents)"
+    ]
+  }
+}
+```
+
+代价：这个项目里 `/mattpocock-skills:implement` 没法自动转调 tdd 和 code-review，需要时你自己敲。
+
+</Tab>
+<Tab value="Matt 为主">
+
+```json title=".claude/settings.json"
+{
+  "enabledPlugins": {
+    "mattpocock-skills@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
+  },
+  "permissions": {
+    "deny": ["Skill(superpowers:*)"]
+  }
+}
+```
+
+不推荐。superpowers 的 SessionStart hook 没法单独关（`disableAllHooks` 会连你自己的护栏 hook 一起关），它会继续注入“必须先调用 skill”的指令；手动调用它的 skill 也没法再转调其他 skill。备用的 superpowers 直接按方案 A 停用。
+
+</Tab>
+</Tabs>
+
+### 方案 C：把备用引擎装成普通 skill
+
+`skillOverrides` 只对个人和项目 skill 生效。如果你用 Matt README 里的另一种装法 `npx skills@latest add mattpocock/skills` 把 skill 复制进项目，它们就是普通 skill，可以这样设：
+
+```json title=".claude/settings.local.json"
+{
+  "skillOverrides": {
+    "tdd": "user-invocable-only",
+    "diagnosing-bugs": "user-invocable-only"
+  }
+}
+```
+
+键名以 `/skills` 菜单里显示的为准；也可以在菜单里选中后按空格切换状态、按 Esc 保存。别同时装插件版和复制版，否则每个 skill 会出现两次。
+
+## 3. 补上“自动强制”的三个办法
+
+superpowers 的“强制”来自 hook 注入的提示词和 skill 之间的连锁调用，本质是强引导，模型仍可能跳步。换到 Matt 之后，从软到硬加三层：第一层是提示，后两层才是机械关卡。
+
+### ① CLAUDE.md 硬规则
+
+```markdown title="CLAUDE.md"
+## 工作流程（硬规则）
+- 实质改动（新功能、改行为、改数据结构）写代码之前，docs/specs/ 里必须有对应的 spec。没有就停下，请我运行 /mattpocock-skills:grill-with-docs 和 /mattpocock-skills:to-spec
+- 有了 spec 再用 tdd skill 实现，一次一个切片
+- 一行级的修复可以不写 spec，但提交信息里要写明原因
+- 说"完成"之前，贴出全量测试、类型检查、lint 的命令和结果；UI 改动要真打开页面看过
+```
+
+为什么写“请我运行”而不是“先运行”：grill-with-docs 和 to-spec 设了 `disable-model-invocation: true`，模型去调用会被拒绝，报错原文就是让它请用户自己运行。tdd 是纪律类，模型可以直接调用。
+
+但 CLAUDE.md 只是上下文，不是强制配置（官方文档原话），所以还要第二层。
+
+### ② hook 拦截
+
+两个脚本：当前分支没有 spec，不许改 `src/`；本次会话改过 `src/`（已经提交的也算）却没过测试，不许收工。脚本依赖 `jq`，写完运行 `chmod +x .claude/hooks/*.sh`。分支名按 `feature/<slug>` 约定，spec 按 `docs/specs/YYYY-MM-DD_<slug>.md` 命名。
+
+```bash title=".claude/hooks/require-spec.sh"
+#!/bin/bash
+# 当前分支没有对应的 spec，就不许改 src/ 下的文件
+input=$(cat)
+file=$(jq -r '.tool_input.file_path // empty' <<<"$input")
+[[ "$file" == */src/* ]] || exit 0                    # 只管业务代码
+
+cd "$(jq -r '.cwd' <<<"$input")" 2>/dev/null || exit 0
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
+[[ "$branch" == chore/* ]] && exit 0                   # 杂务分支豁免
+slug=${branch#*/}                                      # feature/todo-tags → todo-tags
+ls "$root"/docs/specs/*_"$slug".md >/dev/null 2>&1 && exit 0
+
+echo "分支 $branch 没有对应的 docs/specs/*_$slug.md。先停下，请用户运行 /mattpocock-skills:grill-with-docs 和 /mattpocock-skills:to-spec；一行级修复请改用 chore/ 分支。" >&2
+exit 2
+```
+
+```bash title=".claude/hooks/verify-gate.sh"
+#!/bin/bash
+# 本次会话改过 src/，收工前必须过测试和类型检查
+# 参数：start（SessionStart）、prompt（UserPromptSubmit）、stop（Stop）
+input=$(cat)
+sid=$(jq -r '.session_id' <<<"$input")
+cd "$(jq -r '.cwd' <<<"$input")" 2>/dev/null || exit 0
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+state="$(git rev-parse --git-common-dir)/claude-verify"
+mkdir -p "$state"
+
+case "$1" in
+  start)   # 记下会话开始时的 HEAD，只记第一次
+    [[ -f "$state/$sid.base" ]] || git rev-parse HEAD > "$state/$sid.base" ;;
+  prompt)  # 用户发"豁免验证：原因"，本会话不再拦，并记一笔
+    prompt=$(jq -r '.prompt' <<<"$input")
+    if [[ "$prompt" == 豁免验证* ]]; then
+      echo "$(date +%F) $sid ${prompt%%$'\n'*}" >> "$state/waivers.log"
+      touch "$state/$sid.waived"
+    fi ;;
+  stop)
+    [[ -f "$state/$sid.waived" ]] && exit 0
+    base=$(cat "$state/$sid.base" 2>/dev/null || echo HEAD)
+    changed=$(git diff --name-only "$base" -- src; git ls-files --others --exclude-standard -- src)
+    [[ -z "$changed" ]] && exit 0                      # 本次会话没动 src/（已提交的也算）
+    out=$( { bun test && bunx tsc --noEmit; } 2>&1 ) && exit 0
+    if [[ "$(jq -r '.stop_hook_active' <<<"$input")" == "true" ]]; then
+      # 已经拦过一次仍没通过：放行，但把决定交给用户
+      jq -n '{systemMessage: "本次会话改过 src/，测试或类型检查仍未通过。让 Claude 继续修，或者发一条以「豁免验证」开头、写明原因的消息。"}'
+      exit 0
+    fi
+    { echo "本次会话改过 src/，但测试或类型检查没通过。先修好再结束；修不好就停下，向用户说明原因。"
+      echo "$out" | tail -20; } >&2
+    exit 2 ;;
+esac
+exit 0
+```
+
+```json title=".claude/settings.json"
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/require-spec.sh" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/verify-gate.sh start" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/verify-gate.sh prompt" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/verify-gate.sh stop" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+几点说明（细节见 [hooks 文档](https://code.claude.com/docs/en/hooks)）：
+
+- PreToolUse hook 以退出码 2 结束，工具调用被拦下，stderr 交给模型
+- 收工检查比较的是会话开始时记下的 HEAD 和当前代码，提交过的改动也算在内。第一次没通过，用退出码 2 让 Claude 接着修；再次尝试结束时仍没通过就放行，但用 `systemMessage` 明确提示你，由你决定继续修还是豁免
+- 人工豁免的动作只有一个：你发一条以“豁免验证”开头、写明原因的消息。只有用户消息会触发 UserPromptSubmit；豁免只对本次会话有效，并记进 `.git/claude-verify/waivers.log`，30 天评估时算一次“流程被跳过”
+- 标记文件在 `.git/` 里，agent 理论上也能自己写。这道关防的是疏忽，不是恶意
+- 脚本读 hook 输入里的 `cwd` 而不是 `CLAUDE_PROJECT_DIR`，因为进了 worktree 之后只有前者会跟着变；测试命令换成你项目的
+
+两个脚本已在临时仓库里用 17 种输入验证过。hook 也会悄悄失效，记得纳入[护栏体检](/docs/guardrails/health-check)。
+
+### ③ 合并关卡
+
+最后一道放在合并前，agent 和人都绕不过去：
+
+- PR 描述必须链接 `docs/specs/` 里的 spec。Matt 的 code-review 会按分支名去 `docs/` 下找 spec，找不到会先问你 spec 在哪；你确认没有，Spec 那一轴才报告没有 spec，把这当成阻塞项
+- 重大改动由另一个模型家族独立二审，人最后拍板（见[自己审自己等于没审](/docs/pitfalls/cross-model-review)）
+- 把 `Bash(gh pr merge *)` 放进 ask 规则，合并必须你点头（见[权限规则](/docs/guardrails/permissions)）
+
+## 4. 30 天评估法
+
+切换前先写下判定标准，免得 30 天后凭感觉找理由。看四个指标：
+
+| 指标 | 怎么数 | 从哪拿 |
+|---|---|---|
+| 返工轮数 | 第一次提交到合并之间，因审查或自测不过而重做的轮数 | PR 审查记录、自己记 |
+| 审查发现数 | 各道审查发现的问题，按高、中、低分开记 | 审查报告 |
+| PR 合并周期 | PR 创建到合并；想从 spec 确认算起，再取 spec 首次提交的日期 | `gh pr list`、`git log` |
+| 流程被跳过次数 | 实质改动没先有 spec 就开工的次数，包括被 hook 拦下的和人工豁免的 | hook 报错、`waivers.log`、PR 有没有 spec 链接 |
+
+记录方式：每个任务一行，写进复盘（[复盘模板](/docs/templates/retro)里有这一节）。下面是示例：
+
+```markdown
+| 日期 | 任务 | 引擎 | 返工轮数 | 审查发现（高/中/低） | PR 合并周期 | 跳过流程 | 备注 |
+|---|---|---|---|---|---|---|---|
+| 2026-10-20 | 待办加标签 | Matt | 1 | 0/2/3 | 1.5 天 | 否 | grill 问出了标签数量上限 |
+| 2026-10-22 | 修复筛选分页 | Matt | 2 | 1/1/0 | 0.5 天 | 是 | 没写 spec，被 hook 拦了一次 |
+```
+
+几条现成的命令：
+
+```bash
+# 最近 50 个已合并 PR 的创建和合并时间，用来算 PR 合并周期
+gh pr list --state merged --limit 50 --json number,title,createdAt,mergedAt
+
+# 某份 spec 首次提交的日期，想从 spec 确认算起时用
+git log --diff-filter=A --format=%ad --date=short -- docs/specs/2026-10-16_todo-tags.md
+
+# 最近 100 个已合并 PR 里，有多少没链接 spec
+gh pr list --state merged --limit 100 --json number,body \
+  --jq '[.[] | select((.body // "") | contains("docs/specs/") | not)] | length'
+```
+
+基线：superpowers 时期的 PR 合并周期和审查轮次可以从 PR 历史里捞。再用 `/skill-doctor` 看各个 skill 实际被调用了多少次：30 天里 grill 和 to-spec 几乎没用过，说明“手动调用”在你身上不成立。
+
+判定标准举例（要在开始前写好）：
+
+- 跳过次数明显上升、返工变多：先加强 hook，再观察两周
+- 加强之后还是不行：切回 superpowers，或者按项目混用（方案 A）
+- 指标持平或更好，自建 SOP 也不再被抢：留下 Matt
+
+## 5. 文档输出路径统一
+
+| 文档 | superpowers 默认 | Matt 默认 | 统一到 |
+|---|---|---|---|
+| spec | `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` | Issue（本地模式是 `.scratch/<feature>/spec.md`） | `docs/specs/YYYY-MM-DD_<slug>.md`，Issue 里只贴链接 |
+| 实现计划 | `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md` | 无，to-tickets 拆成工单 | `docs/plans/YYYY-MM-DD_<slug>-plan.md` |
+| ADR | 无 | `docs/adr/0001-<slug>.md` | `docs/adr/` |
+| 术语表 | 无 | `GLOSSARY.md` | `GLOSSARY.md` |
+| 交接文档 | 无 | 系统临时目录 | 要留存就移进 `docs/` |
+
+两边都改得动：
+
+- **superpowers**：它的 skill 写明用户偏好优先于默认路径，在 CLAUDE.md 里写一行新路径即可
+- **Matt**：Issue 的约定写在 setup 生成的 `docs/agents/issue-tracker.md`，可以直接改成“先写 `docs/specs/YYYY-MM-DD_<slug>.md` 并提交，再开 Issue 贴摘要和链接”
+
+术语表是一个新的存储，引入之前想清楚它替代谁（见[记忆分层](/docs/org/memory)）。
+
+## 常见坑
+
+- [同一时间只让一套流程自动接管](/docs/pitfalls/one-process-engine)
+- [实质改动先留文档再动手](/docs/pitfalls/process-before-code)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [计划和执行分开会话](/docs/pitfalls/split-plan-exec)
+
+## 相关
+
+<Cards>
+  <Card title="superpowers 与 Matt：完整对比" href="/docs/workflow/superpowers-vs-matt" description="两种哲学、各自优缺点、选择建议" />
+  <Card title="一页 CLAUDE.md" href="/docs/templates/claude-md" description="工作流程硬规则放在这里" />
+  <Card title="hook 护栏" href="/docs/guardrails/hooks" description="把规则变成机械执行" />
+  <Card title="复盘模板" href="/docs/templates/retro" description="30 天评估的数据写进复盘" />
+</Cards>

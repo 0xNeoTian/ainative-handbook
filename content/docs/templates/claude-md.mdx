@@ -1,0 +1,87 @@
+---
+title: 一页 CLAUDE.md
+description: 只放每次都要遵守的规则：技术栈、命令、禁区和指针
+evidence: lived
+tier: [product, org]
+stage: cross
+updated: 2026-10-16
+---
+
+CLAUDE.md 每个会话开头都会被读进上下文，所以只放“每次都要遵守”的东西：项目一句话、技术栈、常用命令、文档指针、工作流程硬规则、禁区。控制在一页以内。官方建议每个文件不超过 200 行，一页只是更严格的版本：写得越长，规则越容易被忽略。先用 `/init` 生成初稿，再按下面的模板删到一页。
+
+## 模板
+
+```markdown title="CLAUDE.md"
+# 待办应用（todo-app）
+
+给个人用户的待办清单 Web 应用，支持标签、筛选和提醒。
+
+## 技术栈
+- Next.js（App Router）+ TypeScript strict + Tailwind CSS
+- Supabase（PostgreSQL + Auth）
+- 包管理用 bun，部署在 Vercel
+
+## 常用命令
+- 开发：bun dev
+- 测试：bun test
+- 类型检查：bunx tsc --noEmit
+- Lint：bun run lint
+- 本地数据库：bunx supabase start
+
+## 文档在哪
+- 需求与设计：docs/specs/（YYYY-MM-DD_<slug>.md，开头一节是 intent）
+- 实现计划：docs/plans/（YYYY-MM-DD_<slug>-plan.md）
+- 决策记录：docs/adr/；术语表：GLOSSARY.md
+- 运维手册：docs/runbooks/；审查规则：REVIEW.md
+
+## 工作流程（硬规则）
+- 实质改动先有 spec 再动手；没有就停下来提醒我，不要直接改代码
+- 先用 Plan mode 出计划，我确认后再执行
+- 测试先行；说"完成"之前贴出测试、类型检查、lint 的命令和结果
+- UI 改动要真启动、真打开页面看过，才算完成
+
+## 禁区（CRITICAL）
+- 不执行 git reset、git rebase、git push --force，不 amend 已推送的提交；确实需要时先停下问我
+- 不提交 .env* 文件；密钥只从环境变量读
+- 破坏性数据库操作（reset、DROP、删卷）之前先备份，并等我确认
+- 不发布生产环境，由我手动发布
+```
+
+跑过 `/mattpocock-skills:setup-matt-pocock-skills` 之后，它会在末尾追加一个 `## Agent skills` 小节，指向 `docs/agents/` 下的约定文件，保留即可。
+
+## 每一节怎么填
+
+| 节 | 怎么填 | 最容易犯的错 |
+|---|---|---|
+| 项目一句话 | 写给第一次打开这个仓库的人：它是什么、给谁用 | 写成一大段背景、愿景和路线图 |
+| 技术栈 | 只写会影响代码写法的选择：框架、语言模式、包管理、部署平台 | 把 `package.json` 里的依赖再抄一遍 |
+| 常用命令 | 写能直接复制运行的命令，agent 要靠它们自己验证结果 | 写“运行测试”而不写具体命令。官方文档举的正是这个例子：写“提交前运行 `npm test`”，而不是“测试你的改动” |
+| 文档在哪 | 只写路径和命名规则，不把内容抄进来 | 用 `@path` 引用整份文档。`@` 会在启动时把整个文件读进上下文；只想提一下路径，就用反引号包起来 |
+| 工作流程 | 写成能检查的规则，一条一行 | 写“注意代码质量”这类没法判断有没有做到的话 |
+| 禁区 | 写死不能做的操作，并说明确实需要时怎么办 | 只写在这里。CLAUDE.md 是上下文，不是强制配置，真正要拦住的操作还要配上[权限规则](/docs/guardrails/permissions)或 [hook](/docs/guardrails/hooks) |
+
+## 不放什么
+
+- **只在某类任务里用到的方法论**：做成 skill，需要时才加载
+- **只对部分目录有效的规则**：放进 `.claude/rules/`（用 `paths` 限定路径），或者写在子目录自己的 CLAUDE.md 里
+- **个人偏好**：放 `~/.claude/CLAUDE.md`，不要塞进团队共享的文件
+- **库的 API 用法**：让 Claude 用 context7 现查，不要凭记忆写进来
+- **lint 和类型检查能管的格式规则**：交给工具，机械执行比文字提醒可靠
+- **密钥、内部地址、账号**：永远不放，这个文件会进 git
+
+## 和 AGENTS.md 一起用
+
+如果你还用 Codex 这类工具做二审，可以把共用的规则写在 `AGENTS.md`，CLAUDE.md 第一行写 `@AGENTS.md` 导入它，下面再写只给 Claude 的部分。注意 Claude Code 只在没有 CLAUDE.md 的时候才直接读 `AGENTS.md`，两个文件都有时要靠这一行导入。
+
+## 定期修剪
+
+规则会过时，也会互相打架。官方给了一个检查命令 `/doctor prompt-audit`（需要 Claude Code v2.1.283 或更高），它会找出过时的指令、引用了不存在的文件或命令、以及互相矛盾的地方，只出报告，不会自己改文件。装插件时也留意：有些插件的安装提示会让你往 CLAUDE.md 里加一大段说明，只留你真在用的部分。
+
+## 相关
+
+<Cards>
+  <Card title="第 0 步：起步" href="/docs/product/day-0" description="建仓库、一页 CLAUDE.md、护栏和工具" />
+  <Card title="权限规则" href="/docs/guardrails/permissions" description="要拦住的操作写进 deny 和 ask" />
+  <Card title="从 superpowers 迁到 Matt" href="/docs/workflow/migrate" description="工作流程硬规则怎么写才有效" />
+  <Card title="spec 模板" href="/docs/templates/spec" description="docs/specs/ 里的文档长什么样" />
+</Cards>

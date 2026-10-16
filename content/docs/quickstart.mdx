@@ -1,0 +1,118 @@
+---
+title: 快速开始
+description: 10 分钟开始 AI Native 开发：装好 Claude Code、给环境体检，用一个小功能走通完整流程
+evidence: lived
+tier: [tool, product]
+stage: day0
+updated: 2026-10-16
+---
+
+这一页带你用 10 分钟走通 AI Native 开发的最小闭环：**装好 Claude Code → 给环境体检 → 选档 → 起项目 → 用一个小功能走完"拷问需求、写 spec、先出计划、测试先行、审查、上线"**。手册以 Claude Code 为主线；方法同样适用于 Codex、Cursor、Gemini CLI 等 AI 编程工具，命令请按各自文档替换（见文末）。
+
+## 开始之前
+
+- **账号**：Claude Code 需要 Pro、Max、Team、Enterprise 或 Console 账号（免费版不包含），并且要在 Anthropic 支持的地区使用；也可以通过 Amazon Bedrock、Google Cloud、Microsoft Foundry 等平台接入。
+- **基础工具**：git，以及已登录的 GitHub CLI（`gh auth status` 显示已登录）。前端项目再准备 bun 或 Node.js 22 以上。
+
+## 第 1 步：装好 Claude Code（2 分钟）
+
+<Tabs items={['原生安装（推荐）', 'Homebrew', 'npm']}>
+<Tab value="原生安装（推荐）">
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+原生安装会在后台自动更新。
+
+</Tab>
+<Tab value="Homebrew">
+
+```bash
+brew install --cask claude-code
+```
+
+Homebrew 安装不会自动更新，需要定期运行 `brew upgrade claude-code`。
+
+</Tab>
+<Tab value="npm">
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+需要 Node.js 22 或以上；不要用 `sudo npm install -g`。
+
+</Tab>
+</Tabs>
+
+装好后开一个新终端：
+
+```bash
+claude --version   # 打印版本号即安装成功
+claude doctor      # 官方自带的只读检查：安装是否健康、设置文件有没有错误
+claude             # 进入会话，按浏览器提示登录
+```
+
+## 第 2 步：装本手册插件，给环境体检（2 分钟）
+
+```bash
+claude plugin marketplace add https://ainative.jubao.ai/marketplace.json
+claude plugin install ainative@ainative
+```
+
+重启 Claude Code 后运行 `/ainative:doctor`。它和官方的 `claude doctor` 是互补的：`claude doctor` 查安装和设置文件本身；`/ainative:doctor` 查工作流和护栏层面，例如插件是否冗余或互相抢触发、权限规则和 hook 是否还在、配置有没有被切换工具覆盖。先处理报告里的 P0。
+
+## 第 3 步：选档（1 分钟）
+
+一个人、一个仓库、还没有长期用户，就是小工具；有了真实用户就是产品；多个仓库、多人协作就是组织。拿不准就运行 `/ainative:recommend`，或者看[选档](/docs/tiers)。
+
+## 第 4 步：起项目（3 分钟）
+
+两种方式任选：
+
+- 在空目录里运行 `/ainative:new-project`，它按档位走完第 0 步，每个写操作都会先问你。
+- 打开[启动器](/docs/launcher)，选好档位，照着清单复制命令。
+
+不管哪种，都先配好[最小护栏](/docs/tool/guardrails)：五条 deny 规则、密钥只放环境变量。
+
+## 第 5 步：用一个小功能走完整流程
+
+挑一个半小时能做完的小功能（例如"给待办事项加标签"），按下面走一遍。流程引擎用的是 Matt Pocock skills <Evidence kind="trial" />，没装的话先运行 `claude plugin install mattpocock-skills@claude-plugins-official`。
+
+<Steps>
+<Step>
+**拷问需求**：`/mattpocock-skills:grill-me`。把结论写进 `docs/specs/YYYY-MM-DD_<名字>.md` 的第一节 intent：做什么、为什么、不做什么、怎么算成功。
+</Step>
+<Step>
+**先出计划**：按 `Shift+Tab` 循环切换到 plan mode（或直接用 `/plan`），让 Claude 读 spec、出 plan，你确认后再动手。
+</Step>
+<Step>
+**测试先行**：`/mattpocock-skills:tdd`，先写一个会失败的测试，再写实现让它通过。
+</Step>
+<Step>
+**换一个模型审**：先跑内置的 `/code-review`；重要改动再交给另一个模型家族独立审一遍，例如 `codex review --base main`。
+</Step>
+<Step>
+**亲眼看结果**：界面改动必须真启动、真打开、亲眼确认。单测通过不等于做完。
+</Step>
+<Step>
+**上线要人确认**：把部署命令放进 ask 规则，上线前由你点确认。做法见[发布](/docs/product/ship)。
+</Step>
+</Steps>
+
+走完这一遍，你就有了一个带 spec、带测试、经过审查的小功能。之后每个功能都按这个节奏走，细节见[产品篇](/docs/product)。
+
+## 在其他 AI 编程工具里用这本手册
+
+方法本身和工具无关：六个阶段、审查三角、三层护栏、ops 分层，换成别的 AI 编程工具同样成立。具体到命令和配置，以 Claude Code 为准，其他工具 <Evidence kind="industry" /> 请对照各自文档：
+
+- **读全文**：把 [`/llms-full.txt`](https://ainative.jubao.ai/llms-full.txt) 交给你的工具，或者在任意页面点"复制 Markdown"。
+- **项目规则**：写进 AGENTS.md。Codex 等工具会原生读取它；Claude Code 读的是 CLAUDE.md，在 CLAUDE.md 里写一行 `@AGENTS.md` 就能导入。
+- **skill**：本手册插件里的 skill 是 SKILL.md 格式，部分其他工具也支持这种格式，能否直接使用以各工具文档为准。
+
+## 下一步
+
+- [产品篇：AI-native 开发六阶段](/docs/product)
+- [坑库](/docs/pitfalls)：先看和你手上的事最相关的那几张
+- [工具与方法雷达](/docs/reference/radar)：每个工具为什么选、为什么不选

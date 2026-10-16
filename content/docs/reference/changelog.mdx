@@ -1,0 +1,43 @@
+---
+title: 更新日志
+description: 每个版本改了什么
+evidence: lived
+updated: 2026-10-16
+---
+
+这一页记录每个版本的实质变化，最新的版本在最上面；措辞和排版上的小修正不单独记。
+
+## v0.1.3 · 2026-10-17
+
+- **证据链**：25 张坑卡和全站关键数字逐条对照原始复盘、提交与工作记录核对（共 94 条），修正了 59 处与记录不符或属于推断的细节；每张卡新增“依据”标注；没有对应事故的规则如实改为原则卡
+- **可执行文档**：GitHub Actions 每次提交自动跑敏感信息扫描（含全部历史）、代码片段与设置 schema 校验、链接检查、插件测试与校验；首次运行就抓出一处 shell 引号错误
+- 新增[快速开始](/docs/quickstart)和[工具与方法雷达](/docs/reference/radar)
+- 插件 `ainative` 升到 0.1.3：同步修正后的坑卡与说法，体检脚本在家目录经过软链接时也能正确缩写路径
+
+## v0.1.2 · 2026-10-16
+
+- 开源：仓库公开在 [github.com/0xNeoTian/ainative-handbook](https://github.com/0xNeoTian/ainative-handbook)，内容 CC BY 4.0，代码与插件 MIT，欢迎 issue 和 PR
+- [插件](/docs/reference/plugin) `ainative` 升到 0.1.2：根据另一个模型家族（Codex）的三轮独立审查，修复体检与配置合并脚本的隐私和健壮性问题——hook 命令不再输出参数、只统计真实的 skill 和命令调用事件、dry-run 与告警全部脱敏、严格校验 JSON、写入必须与确认过的计划完全一致、备份放在仓库之外。已安装的用户运行 `claude plugin marketplace update ainative` 和 `claude plugin update ainative@ainative` 即可更新
+
+## v0.1.0 · 2026-10-16
+
+第一个公开版本。
+
+- 三档路径：[小工具](/docs/tool)、[产品](/docs/product)（AI-native 六阶段）、[组织](/docs/org)（ops 仓、组织级 ops agent、记忆分层、进化回路）
+- 专题：[流程引擎](/docs/workflow)（superpowers 与 Matt Pocock 的完整对比和迁移方法）、[护栏与安全](/docs/guardrails)
+- [坑库](/docs/pitfalls)：25 张卡片，每张标明依据，可按阶段和档位筛选
+- [模板库](/docs/templates)：一页 CLAUDE.md、intent、spec、plan、ADR、复盘、REVIEW.md、子 agent 提示词
+- [启动器](/docs/launcher)：按档位勾选的交互式清单
+- [Claude Code 插件](/docs/reference/plugin) `ainative`：doctor、setup、recommend、new-project、pitfall-check、harvest
+- 给 AI 读的入口：`/llms.txt`、`/llms-full.txt`，每页可复制 Markdown
+
+## 接下来
+
+- 英文版（`/en/...`，中文链接保持不变）：先翻首页、开始、坑库、流程引擎对比和插件说明
+- 组织篇的三个进化机制（模板继承、园丁 agent、护栏体检）跑满一个月后，补上实测数据
+- Matt Pocock skills 试用满 30 天后，更新对比结论
+
+## 相关
+
+- [开始](/docs)
+- [关于](/docs/reference/about)

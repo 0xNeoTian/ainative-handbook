@@ -1,0 +1,107 @@
+---
+title: 运维：线上问题变成新的 intent
+description: 上线后盯住，出了问题先诊断再动手，把事故写成新的 intent 和复盘，再沉淀成会自动生效的规则
+evidence: lived
+tier: [product]
+stage: maintain
+updated: 2026-10-17
+---
+
+运维阶段把线上问题接回规划：**发现异常 → 只读诊断 → 写成新的 intent → 从规划重新走一遍**。真正的事故再写一篇复盘。复盘里的教训不能只停在文档里，要一级一级变成 playbook、规则和 hook，下次才会自动生效。
+
+| 产物 | 人工关卡 | 衡量指标 |
+|---|---|---|
+| 诊断记录、新的 spec（开头是 intent）、复盘 | 你决定马上修、排期还是放弃；修复照样走发布关卡 | 从发现问题到写出新 intent 的时间；同一类事故有没有再发生 |
+
+## 为什么
+
+Playbook 的最后一招叫“闭合指标回路”：线上指标越过正常范围时，Claude 先只读诊断，只通过事先批准的路径行动（开 PR 进审查关卡，或者执行预先批准的 runbook，比如回滚），然后把发现写成新的 intent，回到第一阶段。人不再需要亲手开始每一项修复，只负责分诊和审查。
+
+它衡量这一招的方式也很直接：从指标异常到 intent 进入分诊队列用了多久；有多少发现最终变成了合并的修复；同一类事故是不是越来越少。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+### 上线后盯住
+
+gstack 的 `/canary <url>` 默认盯 10 分钟：定时截图、看控制台报错和性能，和上线前的基线比对。部署前先跑一次 `/canary <url> --baseline` 留下基线；只想快速检查一遍，用 `--quick`。<Evidence kind="industry" />
+
+Playbook 的做法更进一步：挑一个有稳定基线的指标，比如 CI 失败率、上线后的 5xx 比例、PR 周期，用确定性的脚本判断有没有越界，越界了再触发 Claude 诊断。“有没有异常”这一步不用模型判断。
+
+</Step>
+<Step>
+
+### 先诊断，再动手
+
+```text
+/investigate 上线后导出接口偶发 500，先找根因，不要改代码
+```
+
+gstack 的 `/investigate` 和 Matt 的 `/mattpocock-skills:diagnosing-bugs` 做的是同一件事：先复现，再假设，再验证。两个选一个当默认，别让它们抢着触发。线上诊断只给读权限：读代码、读日志、跑只读命令；要改东西，开 PR 进审查关卡。
+
+</Step>
+<Step>
+
+### 写成新的 intent
+
+诊断结论写成一份新 spec 的第一节，比如 `docs/specs/2026-10-20_export-500.md`。intent 里写清：异常现象和证据、期望的结果、受影响的部分、待定问题。然后由你分诊：马上修、排期，还是放弃。
+
+修复照常走设计、开发、测试、发布，没有捷径。修好之后，把这次的复现变成一个回归测试或 eval，同类问题以后在 CI 里就能拦住。
+
+</Step>
+<Step>
+
+### 真正的事故，写复盘
+
+影响了用户、或者差点出事的，写一篇复盘：`docs/retros/YYYY-MM-DD_<event>.md`。我半年攒了 70 多篇复盘，模板里最有用的是“Harness 反馈”一节：这次的问题，本该被哪条规则、哪个 hook、哪份文档拦住，为什么没拦住，要补什么。模板见[复盘模板](/docs/templates/retro)。
+
+Matt 的 `/mattpocock-skills:retro` 可以从会话记录里找改进点。它只看 agent 的环境，不看代码：导航指针够不够、有没有自动检查能拦住这次的错误、审查规则要不要加一条、CLAUDE.md 里有没有不起作用的指令。它的原则是：机械性的错误变成确定性的检查，需要判断的才写进规范。注意 gstack 也有一个 `/retro`（每周工程回顾），用 Matt 的要写全名。<Evidence kind="trial" />
+
+</Step>
+</Steps>
+
+## 复利：教训 → playbook → hook
+
+坦白说，我沉淀得很勤，回流做得不好：70 多篇复盘、200 多条记忆都在，可很多教训只是文字，下次照样踩。现在的规则是三级台阶：
+
+1. **第一次踩**：写进复盘，记一条反馈
+2. **有通用价值**：提炼进 playbook 或 runbook。跟代码绑定的 runbook 放代码仓的 `docs/runbooks/`，里面的检查步骤尽量变成 CI
+3. **同一个坑出现第二次**：起草 hook 或权限规则，让它自动生效
+
+沉淀只走这一条路，不要为了“记下来”再引入新的存储。装了[本手册插件](/docs/reference/plugin)的话，`/ainative:harvest` 能把一篇复盘提炼成坑卡草稿，顺带做脱敏检查。<Evidence kind="trial" />
+
+## 定期园丁
+
+<Evidence kind="trial" /> 有些维护活适合交给定时运行的云端 agent。内置的 `/schedule` 用来创建 routine（研究预览，Pro、Max、Team、Enterprise 计划可用）：它在 Anthropic 的云端按计划运行，每次克隆你的仓库，改动推到 `claude/` 开头的分支，再由你像审其他 PR 一样审。我在试的园丁任务：
+
+- 每周读新增的复盘，提 PR 更新 playbook 和 CLAUDE.md
+- 查失效的链接和过期的“下次 review 日期”
+- 同一个坑出现了两次，起草一条 hook 规则
+
+护栏本身也会悄悄失效，要定期体检：见[护栏体检](/docs/guardrails/health-check)，或者运行 `/ainative:doctor`。
+
+## 看开销：session-report
+
+<Evidence kind="trial" /> 运维也包括 agent 自己的开销。session-report 从本机的会话记录生成一份可交互的 HTML 报告：token 用量、缓存命中、subagent 和 skill 的开销，以及最贵的那些提示词。
+
+```bash
+claude plugin install session-report@claude-plugins-official
+```
+
+装好后运行 `/session-report:session-report`。看到某个 skill 或子 agent 特别贵，再决定是改提示词、换触发方式，还是干脆停用。
+
+## 常见坑
+
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)：三层防护半年后发现全没了，其中一层两个多月没人发现
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)：runbook 里写的检查，代码早就改了
+- [性能修复先问六个问题](/docs/pitfalls/perf-fix-six-questions)
+
+## 相关
+
+- [复盘模板](/docs/templates/retro)
+- [让 ops 和项目一起进化](/docs/org/evolve)
+- [背后的理念](/docs/reference/ideas)：Compound Engineering 与双环学习
+- 上一步：[发布：AI 审查，人来批准](/docs/product/ship)
+- 回到起点：[规划：先写 intent](/docs/product/plan)

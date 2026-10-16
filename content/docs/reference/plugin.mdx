@@ -1,0 +1,56 @@
+---
+title: 本手册的 Claude Code 插件
+description: 一条命令安装：体检、安装配置、推荐、新项目、坑检查、复盘提炼
+evidence: trial
+tier: [tool, product, org]
+updated: 2026-10-16
+---
+
+这本手册同时是一个 Claude Code 插件，名字叫 `ainative`。装好之后，Claude 可以按手册的方法帮你做六件事：给环境体检、按档位配置工具链、推荐方案、起新项目、拿坑库审查改动、把复盘提炼成卡片。插件刚发布，标为 🧪 试用中。
+
+## 安装
+
+```bash
+claude plugin marketplace add https://ainative.jubao.ai/marketplace.json
+claude plugin install ainative@ainative
+```
+
+装完重启 Claude Code。安装包托管在本站，`marketplace.json` 里带有安装包的 sha256 校验值。插件源码在 [GitHub 仓库](https://github.com/0xNeoTian/ainative-handbook/tree/main/plugin)的 `plugin/` 目录。
+
+## 六个 skill
+
+| 调用 | 做什么 | 会不会改你的东西 |
+|---|---|---|
+| `/ainative:doctor` | 体检：插件和 skill 是否冗余或互相抢触发、权限规则和 hook 是否还在、配置有没有被切换工具覆盖、当前项目处在哪一档、文档目录是否齐全 | 只读，不改任何文件 |
+| `/ainative:setup` | 按档位和流程引擎，装好推荐的插件、合并权限规则、设置 skill 开关 | 会改，但先出计划、先备份，等你确认后才执行 |
+| `/ainative:recommend` | 根据项目情况推荐档位、部署平台、流程引擎和插件组合，每项给一个推荐、一个替代 | 只读 |
+| `/ainative:new-project` | 按档位走完第 0 步：建仓库、一页 CLAUDE.md、intent、最小护栏 | 会改，每个写操作先确认 |
+| `/ainative:pitfall-check` | 用坑库逐条审查当前计划、spec 或分支改动，只报告真正命中的问题 | 只读 |
+| `/ainative:harvest` | 把一篇复盘提炼成坑卡草稿，并做脱敏检查 | 只把草稿写到你指定的目录 |
+
+## 用法示例
+
+- 刚接手一台新电脑或一个老项目：先跑 `/ainative:doctor`，看 P0 问题。
+- 要开新项目：`/ainative:recommend` 先定档位和平台，再 `/ainative:new-project`。
+- 准备合并一个大分支：`/ainative:pitfall-check`，再走[发布流程](/docs/product/ship)里的异构模型二审。
+- 刚写完一篇事故复盘：`/ainative:harvest`，把它变成下一次能用上的规则。
+
+## 隐私
+
+体检时，采集脚本会在本机统计最近一段时间里各个 skill 的调用次数，用来判断哪些插件真正在用。它只解析会话记录里的事件元数据（哪个 skill、哪个命令被调用），**不输出任何对话内容**；hook 命令只报告程序名和脚本路径，不输出参数；脚本本身也不联网。
+
+需要说清楚的一点：体检结果（已对密钥打码）会交给你当前的 Claude Code 会话，由模型解读后给出建议。这和你平时发给模型的其他内容一样，受你所用服务的数据政策约束。介意的话，可以先单独运行采集脚本，自己看一遍输出再决定是否交给模型。
+
+## 更新与卸载
+
+```bash
+claude plugin marketplace update ainative     # 刷新插件市场的版本信息
+claude plugin update ainative@ainative        # 更新插件本身，重启 Claude Code 或运行 /reload-plugins 后生效
+claude plugin uninstall ainative@ainative     # 卸载
+```
+
+## 相关
+
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [插件不是越多越好](/docs/pitfalls/plugin-bloat)
+- [工具分工总表](/docs/reference/toolchain)

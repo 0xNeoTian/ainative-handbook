@@ -1,0 +1,150 @@
+---
+title: 组织 ops agent 的五个组成部分
+description: 身份、宪法、私人记忆、执行能力、进化回路，以及在 Claude Code 里怎么实现
+evidence: lived
+tier: [org]
+stage: cross
+updated: 2026-10-16
+---
+
+一个组织的 ops agent 由五样东西组成：**身份与路由、宪法、私人记忆、执行能力、进化回路**。少了前两样，它只是一个会聊天的助手；少了后两样，它会和组织一起老化。每个组织配一个，不是每个仓库配一个。
+
+## 五件套
+
+| 组成 | 作用 | 在 Claude Code 里怎么做 |
+|---|---|---|
+| ① 身份与路由 | 它是谁、哪些事归它管 | 一个 skill，或者 `.claude/agents/<name>.md`；在 ops 仓设置 `agent` 字段，打开就是它 |
+| ② 宪法（公开） | 团队共同遵守的结论 | ops 仓里的 ADR、runbook、playbook、复盘、红线 |
+| ③ 私人记忆 | 你个人的判断和倾向 | skill 目录下的 `memory/`、自动记忆，或 subagent 的 `memory` 字段 |
+| ④ 执行能力 | 动手做事 | SOP skill、hook、CI 卡点、MCP，打包成插件，经团队私有插件市场分发 |
+| ⑤ 进化回路 | 规则随经验更新 | 复盘 → 规则 → hook；定期园丁（`/schedule`）；护栏体检 |
+
+## ① 身份与路由
+
+身份要写清楚三件事：管什么、不管什么、什么时候必须停下来问人。实现方式有两种：
+
+<Tabs items={['skill（我在用）', 'agent 字段']}>
+<Tab value="skill（我在用）">
+把 ops agent 写成一个 skill，放在 `~/.claude/skills/<名字>/SKILL.md`。在任何仓库里都能用 `/<名字>` 叫出来，描述命中时也会自动触发。它跑在 Claude Code 默认的系统提示词之上，只是多带了一份组织的上下文。我现在用的就是这种。
+</Tab>
+<Tab value="agent 字段">
+<Evidence kind="industry" /> 在 ops 仓的 `.claude/agents/org-a-ops.md` 里定义一个 subagent，再在 ops 仓的 `.claude/settings.json` 里写 `"agent": "org-a-ops"`。之后在 ops 仓里打开 Claude Code，主会话直接就是它，启动标题会显示 `@org-a-ops`；临时换一个 agent 用 `claude --agent <名字>`，命令行参数优先于设置。
+
+要注意：以 agent 身份运行时，agent 文件的正文会**整个替换** Claude Code 默认的系统提示词（CLAUDE.md 照常加载），工具和模型也按 agent 的定义来。所以正文要写完整，不能只写一句“你是 ops agent”（见[官方文档](https://code.claude.com/docs/en/sub-agents)）。
+</Tab>
+</Tabs>
+
+不管哪种实现，身份文件的内容都差不多。以组织 A 的 subagent 写法为例：
+
+```markdown
+---
+name: org-a-ops
+description: 组织 A 的 ops agent。处理跨仓库决策、成员与权限、发版部署 SOP、复盘归档。
+memory: user
+---
+
+你是这个组织的 ops agent，在 ops 仓里工作。
+
+## 你管什么
+- 跨仓库决策（decisions/）、协作剧本（playbooks/）、复盘（retros/）
+- 成员入职、权限变更、发版、部署：按对应的 SOP skill 执行，不临场发挥
+
+## 动手之前
+1. 先读 CLAUDE.md 里的红线
+2. 在 decisions/ 里找和这件事相关的 ADR；找不到就问，不要自己拍板
+3. 涉及权限、删除、对外发布的操作，先列计划，等人确认
+
+## 不归你管
+- 某个代码仓内部的实现 → 请用户到那个仓库里开会话
+- 另一个组织的事 → 交回个人总助手
+```
+
+**每个组织用一个唯一的名字**，比如 `org-a-ops`、`org-b-ops`。`memory: user` 的记忆目录按 agent 名区分，两个组织都叫 `org-ops`，就会共用同一份记忆，正好违反后面说的“两个组织不能混用”。如果这个 agent 只在 ops 仓里用，也可以改成 `memory: local`，让记忆按项目隔离。要注意，这只是把记忆分开存放，不是访问控制：同一台机器上的任何会话都读得到这些文件。真正需要隔离的内容，靠仓库权限和账号来分。
+
+## ② 宪法：团队共同遵守的结论
+
+宪法放在 ops 仓，走 PR、经过审查，人人可查：ADR 记决策，playbook 记协作方式，runbook 记操作步骤，复盘记发生过的事，红线记绝对不能做的事。
+
+ops agent 不需要背下宪法，只需要知道去哪找、什么时候必须找。这和 OpenAI 在《Harness engineering》里的做法一致：入口文件只写一页“地图”，细节放进结构化的 `docs/`，那里才是唯一的事实来源。
+
+红线要尽量下沉成系统规则。能写成 deny 规则或 hook 的，就不要只写在文档里（见[权限规则](/docs/guardrails/permissions)）。
+
+## ③ 私人记忆：你个人的判断
+
+有些东西不该进宪法：你对某个合作方的判断、你偏好的决策方式、还没验证的猜测。它们放在私人记忆里，不进 git，不经审查。
+
+我的做法是在 ops agent 的 skill 目录里放一个 `memory/`，在 SKILL.md 里写明什么时候读、什么时候写。Claude Code 也有原生的写法 <Evidence kind="industry" />：subagent 定义里加 `memory` 字段。`user` 存在 `~/.claude/agent-memory/<名字>/`，按 agent 名区分、跨项目、不进 git；`local` 存在项目的 `.claude/agent-memory-local/<名字>/`，按项目隔离、不进 git；`project` 存在 `.claude/agent-memory/<名字>/`，进 git、团队共享。前提是自动记忆没有关闭。
+
+公开和私人怎么分、为什么不要再加新的存储，见[记忆分层](/docs/org/memory)。
+
+## ④ 执行能力：SOP 打包成插件
+
+ops agent 动手做事，靠的是 SOP skill（打包、部署、合并上游、成员入职这类重复操作）、hook、CI 卡点和 MCP。只在你本机能用的 SOP，团队用不上。<Evidence kind="trial" /> 把它们打包成插件，放进一个私有 GitHub 仓库做团队插件市场：
+
+<Steps>
+<Step>
+在私有仓库根目录写 `.claude-plugin/marketplace.json`，必填 `name`、`owner`、`plugins`，每个插件条目要有 `name` 和 `source`。写完用 `claude plugin validate .` 检查（见[官方文档](https://code.claude.com/docs/en/plugin-marketplaces)）。
+</Step>
+<Step>
+成员安装：先 `claude plugin marketplace add <组织>/<仓库>`，再 `claude plugin install <插件>@<市场名>`。私有仓库用成员本机的 git 凭证克隆，所以每个人都要有这个仓库的读权限。
+</Step>
+<Step>
+也可以写进 ops 仓或代码仓的 `.claude/settings.json`，成员信任这个目录之后，就会自动注册市场、启用插件：
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "team-tools": {
+      "source": { "source": "github", "repo": "<组织>/<插件市场仓库>" }
+    }
+  },
+  "enabledPlugins": {
+    "org-a-ops@team-tools": true
+  }
+}
+```
+
+插件和市场放在同一个仓库里（`source` 写相对路径）最省事；插件在别的仓库时，成员还要手动运行一次 `claude plugin install <插件>@<市场名> --scope project`。
+</Step>
+</Steps>
+
+一个限制要提前知道：**插件里带不了权限规则**。插件的 `settings.json` 只认 `agent` 和 `subagentStatusLine` 两个键，通用的 deny 只能做成插件里的 hook，或者由一个 setup skill 写进各仓库的 settings（见[让 ops 和项目一起进化](/docs/org/evolve)）。
+
+## ⑤ 进化回路
+
+宪法不会自己更新。ops agent 的最后一块，是让每次复盘真正改变点什么：复盘 → 规则 → hook；用 `/schedule` 建一个每周跑的园丁 agent，读新复盘、提 PR 更新 playbook、查失效链接；定期体检护栏还在不在。这三件事我还在试，单独写在[让 ops 和项目一起进化](/docs/org/evolve)。
+
+## 粒度：每个组织一个
+
+- **按仓库拆**：宪法被复制成多份，各自漂移；跨仓库的问题没有人管
+- **所有组织共用一个**：权限边界和保密内容混在一起，迟早串台
+- **每个组织一个**：正好和权限边界、成员、决策的范围对齐
+
+跨组织的事，交给最上面的个人总助手路由（结构见[组织篇首页](/docs/org)）。
+
+## 起名：避开 AIOps
+
+AIOps 在业界已经是固定术语，指用 AI 做 IT 运维：告警聚合、异常检测、根因分析。拿它给自己的 ops agent 起名，搜索、沟通、向别人解释的时候都会混淆。用“组织名 + ops”，或者干脆起一个独立的名字。
+
+## 业界对应的理念
+
+| 理念 | 要点 | 对应五件套 |
+|---|---|---|
+| [Harness Engineering](https://openai.com/index/harness-engineering/)（OpenAI，2026-02） | 人掌舵、agent 执行；约 100 行的 AGENTS.md 当地图，`docs/` 是唯一事实来源；仓库之外的东西对 agent 等于不存在；定期运行的“文档园丁”自动提 PR 修过期文档；规则交给 linter 和 CI 机械执行 | ② 宪法、⑤ 园丁 |
+| [Compound Engineering](https://every.to/chain-of-thought/compound-engineering-how-every-codes-with-agents)（Every） | 每次纠正、决策、失败都写回 agent 读得到的地方；按 Plan → Work → Review → Compound 循环，让下一个功能比上一个更容易做 | ③ 记忆、⑤ 回路 |
+| [双环学习](https://hbr.org/1991/05/teaching-smart-people-how-to-learn)（Argyris 与 Schön） | 单环修正这一次的错误；双环修改产生错误的那条规则本身 | ⑤ 回路：复盘之后要改模板、hook、权限，而不只是记一笔 |
+
+更完整的讨论见[背后的理念](/docs/reference/ideas)。
+
+## 常见坑
+
+- [模板复制后会各自漂移](/docs/pitfalls/template-copy-drift)
+- [同一个组织的记忆不要按目录分裂](/docs/pitfalls/split-memory)
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+
+## 相关
+
+- [ops 放哪：独立仓还是放进项目](/docs/org/ops-repo)
+- [记忆分层](/docs/org/memory)
+- [子 agent 提示词模板](/docs/templates/subagent-prompt)
+- [背后的理念](/docs/reference/ideas)

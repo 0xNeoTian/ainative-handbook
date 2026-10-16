@@ -1,0 +1,10 @@
+{
+  "title": "护栏与安全",
+  "pages": [
+    "index",
+    "permissions",
+    "hooks",
+    "health-check",
+    "secrets"
+  ]
+}

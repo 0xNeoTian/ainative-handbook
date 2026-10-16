@@ -1,0 +1,109 @@
+---
+title: 让 ops 和项目一起进化
+description: 模板继承、园丁 agent、护栏体检：让复盘变成会自动生效的规则
+evidence: trial
+tier: [org]
+stage: cross
+updated: 2026-10-17
+---
+
+规则要双向流动：**项目里踩的坑，回流到 ops，变成 playbook、hook 和模板；ops 里的规则，自动下发到每个项目。** 我目前只做到了“写下来”这一半，缺的是“回流”。这一页的三个机制（模板继承、园丁 agent、护栏体检）是我正在补的，都还在试，所以整页标 🧪。
+
+## 我的现状：沉淀勤，回流缺
+
+<Evidence kind="lived" /> 半年里我攒了 70 多篇复盘、200 多条自动记忆，还有一批 playbook、runbook 和 ADR。按“有没有总结”来算，我做得不差。
+
+但最近几件事接连暴露出问题：
+
+- 半年前给本地数据库加的三层防护，三层全没了：备份脚本那层两个多月没人发现，另外两层被一次整份覆盖带走。恢复手册里甚至写过检查命令，可没有任何机制去跑（[防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)）
+- 第二个组织的规则文件是从第一个复制的，6 处引用指向不存在的文件，“下次 review 日期”过期半年（[模板复制后会各自漂移](/docs/pitfalls/template-copy-drift)）
+- ops 仓里的恢复手册，描述的是一个早已被改掉的 Makefile（[跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)）
+
+用双环学习的话说：我一直在做单环，修好这一次、写一篇复盘；很少做双环，去修改产生错误的那套规则和机制。复盘停留在文字里，下一次照样踩。
+
+## 双向流动
+
+| 方向 | 流动的是什么 | 靠什么机制 |
+|---|---|---|
+| 项目 → ops | 复盘、坑卡，以及“同一个坑出现第二次”的信号 | 园丁 agent 读复盘、提 PR；`/ainative:harvest` 把复盘提炼成坑卡草稿 |
+| ops → 项目 | 通用规则、hook、SOP、模板的更新 | 插件模板继承；代码仓 CLAUDE.md 里的指针 |
+| 回路检查 | 规则还在不在、有没有被覆盖 | 护栏体检 |
+
+## 机制一：模板继承，而不是复制
+
+<Evidence kind="trial" /> 把各组织共用的部分做成一个通用的 ops 插件，各组织在它之上派生，而不是各自复制一份：
+
+```text
+ops-kit/                        通用模板，放在团队私有插件市场里
+├── .claude-plugin/plugin.json
+├── agents/ops.md               ops agent 的骨架
+├── skills/new-adr/             /ops-kit:new-adr
+├── skills/new-retro/           /ops-kit:new-retro
+├── skills/review/              审查流程
+├── skills/doctor/              护栏体检
+└── hooks/hooks.json            通用拦截、数据库自动备份
+
+org-a-ops/                      组织 A 派生，只写自己特有的部分
+└── .claude-plugin/plugin.json  在 dependencies 里声明 ops-kit
+```
+
+几个要点：
+
+- **用 `dependencies` 继承。** 插件清单的 `dependencies` 字段可以声明依赖同一个市场里的另一个插件，启用组织插件时，通用模板会一起启用
+- **升级一次，全体生效。** 通用模板发一个新版本，各组织更新插件时一起拿到，不会再出现“两份一字不差的过期日期”
+- **权限规则要绕一下。** 插件的 `settings.json` 只认 `agent` 和 `subagentStatusLine` 两个键，带不了 deny 和 ask。通用的拦截只能做成插件里的 PreToolUse hook（返回 deny 时，即使开着 bypass 也会拦下），或者由一个 setup skill 写进各仓库的 `.claude/settings.json`，再交给体检确认它们一直在
+
+## 机制二：园丁 agent 每周跑一次
+
+<Evidence kind="trial" /> 用 `/schedule` 建一个每周运行的云端 routine，给它三件活：
+
+1. 读过去一周新增的复盘，把“下次怎么做”里还没进 playbook 的条目整理成 PR
+2. 查失效链接（尤其是跳出仓库的相对链接）和过期的 review 日期
+3. 同一类问题在两篇以上复盘里出现，就起草一个 hook 或 CI 检查，单独提一个 PR
+
+它只提 PR，不直接改主分支，由人审查后合并。一个可以直接改着用的提示词：
+
+```text
+你是 org-ops 仓库的园丁，每周一运行。只提 PR，不要直接推送到 main。
+1. 读 retros/ 下过去 7 天新增的复盘，找出"下次怎么做"里还没写进 playbooks/ 的条目，合并成一个 PR
+2. 检查所有 .md 文件里的链接：跳出仓库的相对路径、指向不存在文件的链接，列在 PR 描述里
+3. 找出 frontmatter 里 next_review 早于今天的文档，列在 PR 描述里
+4. 如果同一类问题出现在两篇以上复盘里，起草一个 hook 或 CI 检查，单独提 PR，标题以 [draft] 开头
+最后在 PR 描述里写清：做了什么、没做什么、哪些需要人来决定
+```
+
+Routines 有几个限制，先知道再用（截至 2026-10，它还是研究预览，见[官方文档](https://code.claude.com/docs/en/routines)）：
+
+- **跑在云端。** 每次运行都克隆你选的 GitHub 仓库，改动推到 `claude/` 开头的分支。它看不到你本机的文件和自动记忆，也用不了 `claude mcp add` 加的本地 MCP。所以园丁只能处理已经进了 git 的东西，这也是团队结论必须进 git 的又一个理由
+- **网络有白名单。** 默认环境只放行常见的包管理和开发域名，要检查外部链接，先在环境设置里放开
+- **门槛。** 最短间隔一小时；需要 Pro、Max、Team 或 Enterprise 订阅
+- **绿灯不等于做对了。** 运行状态显示成功，只说明会话正常结束，要点进记录看它实际做了什么
+
+## 机制三：护栏体检
+
+<Evidence kind="trial" /> 规则写进系统之后，还要确认它一直在：会话开始时跑一个脚本，断言关键的 deny 规则、hook、备份脚本都还在；上游会改的共享文件，在 CI 里断言你的定制还在；隔一段时间跑一次 `/ainative:doctor`。脚本和做法见[护栏体检：防止静默失效](/docs/guardrails/health-check)。
+
+## 怎么判断这三个机制有没有用
+
+建议看四个指标：
+
+- 同一个坑重复出现的次数
+- 从复盘写完到规则落地（PR 合并）的天数
+- 由复盘生成的 hook 和 CI 检查的数量
+- 体检抓到的失效次数
+
+我会在跑满一个月之后，把自己的数据补在这里。
+
+## 常见坑
+
+- [防护规则会悄悄失效](/docs/pitfalls/guardrails-decay)
+- [模板复制后会各自漂移](/docs/pitfalls/template-copy-drift)
+- [跟代码绑定的文档跟代码放一起](/docs/pitfalls/code-coupled-docs)
+- [跨仓链接用完整地址](/docs/pitfalls/absolute-cross-repo-links)
+
+## 相关
+
+- [护栏体检：防止静默失效](/docs/guardrails/health-check)
+- [组织 ops agent 的五个组成部分](/docs/org/ops-agent)
+- [背后的理念](/docs/reference/ideas)
+- [本手册的 Claude Code 插件](/docs/reference/plugin)

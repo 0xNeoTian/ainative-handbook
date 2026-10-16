@@ -1,0 +1,90 @@
+---
+title: 一个域名只挂一个平台
+description: 子域名在旧平台上留着从没生效的绑定，清理时差点连主域名一起删，殃及另一个还在服务的子域名
+type: pitfall
+evidence: lived
+tier: [product]
+stage: ship
+rule: 一个域名只挂一个平台；删除前先查同一主域下的全部依赖
+tweet: 我有个子域名，DNS 早就指向新平台的静态站，旧托管平台上却还留着一个早期项目的绑定，从没生效过。清理时我想干脆把整个主域名从旧平台移除，动手前查了一圈依赖，才发现同一主域下另一个子域名正由旧平台提供服务，一删就下线。最后只删了残留项目。一个域名只挂一个平台，删之前先查全家。
+updated: 2026-10-17
+basis: 2026-10 工作记录
+---
+
+## 发生了什么
+
+我的一个子域名，DNS 早就指向新平台上的静态站；旧托管平台上却还留着一个早期项目的绑定。DNS 不指向它，这个绑定从来没生效过。
+
+清理时，我的第一反应是“干脆把整个主域名也从旧平台移除”，一次清干净。动手前查了一遍同一主域下的依赖，才发现另一个子域名正由旧平台提供服务，DNS 记录也指向旧平台：照原计划删，它会直接下线。最后只删了那个残留项目，主域名保留。
+
+## 为什么会这样
+
+两件事叠在了一起。
+
+第一，迁移只做了“加”没做“减”。新平台接上、DNS 一改，访问一切正常，旧平台上的绑定就没人管了。残留不会报错，所以看不见。
+
+第二，有些平台的域名是按“主域名”管理的。以 Vercel 为例，域名加在账号（团队）层面，子域名挂在下面；从账号里删除一个主域名，会把它从所有关联项目里移除，别名也跟着失效。你以为在删一个子域名，实际删的是一整棵树。
+
+## 怎么做
+
+<Steps>
+<Step>
+
+**定规则**：一个域名（包括每个子域名）只挂一个平台；DNS 统一在 Cloudflare 管，DNS 记录就是“谁在服务哪个域名”的唯一清单。
+
+</Step>
+<Step>
+
+**删除前先列出主域下的全部记录**，看每条指向哪个平台。在 Cloudflare 后台的 DNS 页面看，或者用 API。记录多时要翻页，只看第一页就可能漏掉还在服务的子域名；每页都检查返回状态，并先确认操作的是哪个账号：
+
+```bash
+#!/usr/bin/env bash
+# 列出一个 zone 的全部 DNS 记录：先确认账号，逐页拉取，每页检查 success
+set -euo pipefail
+cf() { curl -s "https://api.cloudflare.com/client/v4/$1" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"; }
+ok() { jq -e '.success' >/dev/null <<<"$1" || { jq '.errors' <<<"$1" >&2; exit 1; }; }
+
+zone=$(cf "zones/$ZONE_ID"); ok "$zone"
+jq -r '.result | "zone: \(.name)  account: \(.account.name)"' <<<"$zone"
+
+page=1
+while :; do
+  resp=$(cf "zones/$ZONE_ID/dns_records?per_page=100&page=$page"); ok "$resp"
+  jq -r '.result[] | "\(.type)\t\(.name)\t\(.content)"' <<<"$resp"
+  [ "$page" -ge "$(jq -r '.result_info.total_pages' <<<"$resp")" ] && break
+  page=$((page + 1))
+done
+```
+
+</Step>
+<Step>
+
+**再去旧平台看还有谁在用**。以 Vercel 为例，先确认登录的账号和团队，再按域名拉全部别名。`vercel alias ls` 一次最多列 100 条，用 `vercel api` 的 `--paginate` 取全：
+
+```bash
+vercel whoami
+vercel api "/v4/aliases?domain=example.com" --paginate --scope your-team \
+  | jq -r '.. | .alias? | strings' | sort -u
+```
+
+任何一步报错就停下，不要在不完整的结果上做删除决定。
+
+</Step>
+<Step>
+
+**由小到大地删**：先解绑确认不用的子域名，观察几天访问日志或监控，确认没有流量了，再考虑删主域名。
+
+</Step>
+<Step>
+
+**迁移清单里写上“旧平台解绑”**。新平台上线和旧平台解绑放在同一张清单里，一起打勾，别留到“以后再说”。
+
+</Step>
+</Steps>
+
+## 相关
+
+- [选平台：Vercel 还是 Cloudflare](/docs/product/platform)
+- [小工具上线：静态站部署到 Cloudflare](/docs/tool/ship)
+- [本机代理会让 DNS 检查失真](/docs/pitfalls/dns-fake-ip)
+- [发版靠清单，不靠感觉](/docs/pitfalls/release-checklist)

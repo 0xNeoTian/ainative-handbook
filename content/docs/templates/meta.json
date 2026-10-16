@@ -1,0 +1,14 @@
+{
+  "title": "模板",
+  "pages": [
+    "index",
+    "claude-md",
+    "intent",
+    "spec",
+    "plan",
+    "adr",
+    "retro",
+    "review",
+    "subagent-prompt"
+  ]
+}
